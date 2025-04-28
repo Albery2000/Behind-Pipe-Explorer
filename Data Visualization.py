@@ -7,19 +7,6 @@ from io import BytesIO, StringIO
 import re
 import base64
 
-# Configure page
-def get_base64_icon(path):
-    with open(r"C:\Users\Hassan.Gamal\Desktop\Data Visualization\logo icon.png", "rb") as f:
-        data = f.read()
-    return "data:image/png;base64," + base64.b64encode(data).decode()
-
-
-icon_path = r"C:\Users\Hassan.Gamal\Desktop\Data Visualization\logo icon.png"
-icon_base64 = get_base64_icon(icon_path)
-
-
-
-
 
 
 # Helper to clean text from surrogate characters
