@@ -5,9 +5,6 @@ import lasio
 import matplotlib.pyplot as plt
 from io import BytesIO, StringIO
 import re
-import base64
-
-
 
 # Helper to clean text from surrogate characters
 def clean_text(text):
