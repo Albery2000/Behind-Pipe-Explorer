@@ -19,7 +19,6 @@ def clean_text(text):
 
 st.set_page_config(
     page_title="Well Data Explorer",
-    page_icon=icon_base64,
     layout="wide")
 
 
