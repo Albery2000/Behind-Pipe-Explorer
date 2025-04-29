@@ -16,7 +16,6 @@ BASE_DIR = Path(r"C:\Users\Hassan.Gamal\Desktop\Bedhind Pipe Project")
 # Set page config
 st.set_page_config(
     page_title="Well Data Explorer",
-    page_icon=get_base64_icon(ICON_PATH),
     layout="wide",
     initial_sidebar_state="expanded"
 )
