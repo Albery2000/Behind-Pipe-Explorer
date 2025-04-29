@@ -12,17 +12,6 @@ import seaborn as sns
 
 # Set up paths
 BASE_DIR = Path(r"C:\Users\Hassan.Gamal\Desktop\Bedhind Pipe Project")
-ICON_PATH = Path(r"C:\Users\Hassan.Gamal\Desktop\hassan project\Images\logo icon.png")
-
-# Function to encode icon as base64
-def get_base64_icon(path: Path) -> str:
-    try:
-        with open(path, "rb") as f:
-            data = f.read()
-        return "data:image/png;base64," + base64.b64encode(data).decode()
-    except FileNotFoundError:
-        st.error(f"Icon file not found at {path}. Using default icon.")
-        return ":material/oil:"
 
 # Set page config
 st.set_page_config(
