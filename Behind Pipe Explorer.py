@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 from io import BytesIO, StringIO
 import sys
 import re
-import base64
 from pathlib import Path
 import seaborn as sns
 
