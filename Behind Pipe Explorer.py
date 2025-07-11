@@ -17,10 +17,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Add custom path for css.py
-sys.path.append(str(BASE_DIR))
-
-
 # Helper to clean text
 def clean_text(text: str | None) -> str:
     if not isinstance(text, str):
