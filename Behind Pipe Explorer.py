@@ -177,12 +177,6 @@ def process_las_files(files: list) -> None:
                 if orig in df.columns and std not in df.columns:
                     df[std] = df[orig]
 
-            # Auto-scale percent curves to fraction
-           for col in ['PHIT', 'PHIE', 'SW', 'VSH']:
-                if col in df.columns:
-                    if df[col].max() > 1.5:  # likely percentage
-                       df[col] = df[col] / 100.0
-
 
             # Fallback for alternative curve names
             fallbacks = {
@@ -1019,5 +1013,6 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
 
