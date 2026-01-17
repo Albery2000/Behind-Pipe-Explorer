@@ -176,6 +176,12 @@ def process_las_files(files: list) -> None:
             for orig, std in mapping.items():
                 if orig in df.columns and std not in df.columns:
                     df[std] = df[orig]
+                    
+            # --- AUTO-DETECT & NORMALIZE PERCENT LOGS ---
+            for col in ['PHIT', 'PHIE', 'SW', 'VSH']:
+                if col in df.columns:
+                    if df[col].max() > 1.5:   # percent data
+                        df[col] = df[col] / 100.0
 
 
             # Fallback for alternative curve names
@@ -285,10 +291,17 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
                 df['NET_RESERVOIR'] = df.get('NET_RES', pd.Series(np.nan, index=df.index)).astype(float)
                 df['NET_PAY'] = df.get('NET_PAY', pd.Series(np.nan, index=df.index)).astype(float)
         else:
-            df['NET_RESERVOIR'] = df.get('NET_RES', pd.Series(np.nan, index=df.index)).astype(float)
-            df['NET_PAY'] = df.get('NET_PAY', pd.Series(np.nan, index=df.index)).astype(float)
-        
-        df['PERF'] = 0
+                       # --- Use CPI values from LAS ---
+                if 'NET_RES' in df.columns:
+                    df['NET_RESERVOIR'] = df['NET_RES']
+                else:
+                    df['NET_RESERVOIR'] = np.nan
+            
+                if 'NET_PAY' in df.columns:
+                    df['NET_PAY'] = df['NET_PAY']
+                else:
+                    df['NET_PAY'] = np.nan
+                    df['PERF'] = 0
         if 'perforations' in well and st.session_state.show_perforations:
             for _, row in well['perforations'].iterrows():
                 df.loc[(df['DEPTH'] >= row['TOP']) & (df['DEPTH'] <= row['BASE']), 'PERF'] = row['PERF_VALUE']
@@ -1013,6 +1026,7 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
 
 
