@@ -164,13 +164,25 @@ def process_las_files(files: list) -> None:
 
             # Standardize column names
             mapping = {
-                'PHIT_D': 'PHIT', 'PHIE_D': 'PHIE', 'SW_AR': 'SW',
+                'PHIT_D': 'PHIT', 'PHIE_T': 'PHIT','PHI_T': 'PHIT',
+                'PHI_TOTAL': 'PHIT', 'SW_AR': 'SW','PHIE_D': 'PHIE',
+                'PHIE_T': 'PHIE','SW_AR': 'SW', 'SW_T': 'SW',
+                'SWT': 'SW', 'VSH_GR': 'VSH',
+                'VSHL': 'VSH',
+                'VCL': 'VSH',  'NET_PAY': 'NET_PAY','NET_RES': 'NET_RES',
                 'SWT_NET': 'SW_NET', 'VSH': 'VSH', 'NET_PAY': 'NET_PAY',
                 'NET_RES': 'NET_RES', 'SH_POR': 'SHPOR', 'PORNET_D': 'PORNET'
             }
             for orig, std in mapping.items():
                 if orig in df.columns and std not in df.columns:
                     df[std] = df[orig]
+
+            # Auto-scale percent curves to fraction
+           for col in ['PHIT', 'PHIE', 'SW', 'VSH']:
+                if col in df.columns:
+                    if df[col].max() > 1.5:  # likely percentage
+                       df[col] = df[col] / 100.0
+
 
             # Fallback for alternative curve names
             fallbacks = {
@@ -1007,4 +1019,5 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
