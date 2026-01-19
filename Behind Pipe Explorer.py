@@ -985,8 +985,6 @@ if st.session_state.well_data:
                                 ax.set_xlim(0, 50)
                             elif curve_name in ['SW', 'VSH']:
                                 ax.set_xlim(0, 100)
-                            elif curve_name in mineral_vols:
-                                ax.set_xlim(0, 100)
             
             plt.tight_layout(pad=2.0, h_pad=1.0)
             st.pyplot(fig, use_container_width=True)
@@ -1000,6 +998,7 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
 
 
