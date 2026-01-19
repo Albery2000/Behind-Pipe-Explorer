@@ -404,8 +404,8 @@ if st.session_state.well_data:
 
     st.markdown(f'<h3 style="color: #1A3C6D;">{clean_text(selected_well)}</h3>', unsafe_allow_html=True)
 
-    # Create tabs for Standard and Customized Visualization
-    standard_tab, custom_tab, correlation_tab = st.tabs(["Standard Visualization", "Customized Visualization", "Correlation Analysis"])
+    # Create tabs for Standard and Customized Visualization only
+    standard_tab, custom_tab = st.tabs(["Standard Visualization", "Customized Visualization"])
 
     # Standard Visualization Tab
     with standard_tab:
@@ -823,134 +823,7 @@ if st.session_state.well_data:
 
             plt.tight_layout(pad=2.0, h_pad=1.0)  # Increased padding and h_pad
             st.pyplot(fig, use_container_width=True)
-    with correlation_tab:
-          st.subheader("Well Log Parameter Correlation Analysis")
-    
-    # Select wells for correlation analysis
-    selected_wells = st.multiselect(
-        "Select Wells for Correlation",
-        options=list(st.session_state.well_data.keys()),
-        default=list(st.session_state.well_data.keys())[:1] if st.session_state.well_data else [],
-        key="corr_well_select"
-    )
-    
-    if selected_wells:
-        # Get common parameters across selected wells
-        common_params = set()
-        for well in selected_wells:
-            df = st.session_state.well_data[well]['data']
-            common_params.update(df.columns)
-        
-        # Remove non-numeric parameters
-        numeric_params = []
-        for param in common_params:
-            for well in selected_wells:
-                df = st.session_state.well_data[well]['data']
-                if param in df.columns and pd.api.types.is_numeric_dtype(df[param]):
-                    numeric_params.append(param)
-                    break
-        
-        if not numeric_params:
-            st.warning("No numeric parameters available for correlation analysis.")
-        else:
-            # Parameter selection
-            param1 = st.selectbox("Select First Parameter", numeric_params, key="corr_param1")
-            param2 = st.selectbox("Select Second Parameter", numeric_params, key="corr_param2")
-            
-            # Depth range selection
-            min_depth = min([st.session_state.well_data[well]['data']['DEPTH'].min() for well in selected_wells])
-            max_depth = max([st.session_state.well_data[well]['data']['DEPTH'].max() for well in selected_wells])
-            depth_range_corr = st.slider(
-                "Depth Range for Correlation (m)",
-                min_depth, max_depth, (min_depth, max_depth), 0.1,
-                key="depth_slider_corr"
-            )
-            
-            # Collect data from all selected wells
-            all_data = []
-            for well in selected_wells:
-                df = st.session_state.well_data[well]['data']
-                mask = (df['DEPTH'] >= depth_range_corr[0]) & (df['DEPTH'] <= depth_range_corr[1])
-                filtered = df[mask].copy()
-                filtered['WELL'] = well
-                all_data.append(filtered[[param1, param2, 'WELL']])
-            
-            if not all_data:
-                st.warning("No data available in the selected depth range.")
-            else:
-                combined = pd.concat(all_data).dropna()
-                
-                if combined.empty:
-                    st.warning("No common data points available for correlation.")
-                else:
-                    # Calculate correlation matrix
-                    corr_matrix = combined.groupby('WELL')[[param1, param2]].corr().unstack().iloc[:, 1]
-                    corr_matrix = corr_matrix.to_frame(name='Correlation').reset_index()
-                    
-                    # Display correlation results
-                    st.subheader("Correlation Results")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.dataframe(corr_matrix.style.format({'Correlation': '{:.3f}'}), use_container_width=True)
-                    
-                    with col2:
-                        st.metric(
-                            "Overall Correlation",
-                            f"{combined[[param1, param2]].corr().iloc[0,1]:.3f}",
-                            help="Pearson correlation coefficient for all selected wells combined"
-                        )
-                    
-                    # Plot scatter plot with regression line
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    sns.regplot(
-                        data=combined,
-                        x=param1,
-                        y=param2,
-                        scatter_kws={'alpha': 0.5},
-                        line_kws={'color': 'red'},
-                        ax=ax
-                    )
-                    
-                    # Add well names to legend if multiple wells
-                    if len(selected_wells) > 1:
-                        for well in selected_wells:
-                            well_data = combined[combined['WELL'] == well]
-                            ax.scatter(
-                                well_data[param1],
-                                well_data[param2],
-                                alpha=0.5,
-                                label=well
-                            )
-                        ax.legend()
-                    
-                    ax.set_xlabel(param1)
-                    ax.set_ylabel(param2)
-                    ax.set_title(f"{param1} vs {param2} Correlation")
-                    st.pyplot(fig)
-                    
-                    # Pairplot for multiple parameters
-                    if len(numeric_params) > 2:
-                        st.subheader("Multi-Parameter Correlation Analysis")
-                        selected_multi_params = st.multiselect(
-                            "Select Parameters for Pairplot",
-                            numeric_params,
-                            default=numeric_params[:3],
-                            key="multi_param_select"
-                        )
-                        
-                        if len(selected_multi_params) >= 2:
-                            pairplot_data = combined[selected_multi_params + ['WELL']].dropna()
-                            if not pairplot_data.empty:
-                                fig = sns.pairplot(
-                                    pairplot_data,
-                                    hue='WELL' if len(selected_wells) > 1 else None,
-                                    diag_kind='kde',
-                                    plot_kws={'alpha': 0.5}
-                                )
-                                st.pyplot(fig)
-                            else:
-                                st.warning("No common data points available for selected parameters.")
+
         # Summary and analysis tabs
         tab1, tab2 = st.tabs(["Summary Table", "Unperforated Net Pay"])
 
@@ -1026,7 +899,3 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
-
-
-
-
