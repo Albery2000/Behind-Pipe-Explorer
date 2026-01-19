@@ -395,7 +395,7 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
             Top=('DEPTH', 'min'),
             Base=('DEPTH', 'max'),
             Avg_Porosity=('PHIT', 'mean') if 'PHIT' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
-            Avg_Sw=('SW', 'mean') if 'SW' in unfperf_df.columns else ('DEPTH', lambda x: np.nan)
+            Avg_Sw=('SW', 'mean') if 'SW' in unperf_df.columns else ('DEPTH', lambda x: np.nan)
         ).reset_index(drop=True)
         
         grouped['Thickness (m)'] = (grouped['Base'] - grouped['Top']).round(2)
@@ -961,3 +961,4 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
