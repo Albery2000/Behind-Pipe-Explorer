@@ -228,11 +228,6 @@ def process_las_files(files: list) -> None:
                 'VCL': 'VSH',  'NET_PAY': 'NET_PAY','NET_RES': 'NET_RES',
                 'SWT_NET': 'SW_NET', 'VSH': 'VSH', 'NET_PAY': 'NET_PAY',
                 'NET_RES': 'NET_RES', 'SH_POR': 'SHPOR', 'PORNET_D': 'PORNET',
-                # Mineral volumes
-                'VGLAUCONITE': 'VGLAU', 'VGLAU': 'VGLAU',
-                'VILITE': 'VILITE', 'VLIME': 'VLIME',
-                'VOIL': 'VOIL', 'VSAND': 'VSAND',
-                'VSILT': 'VSILT', 'VWATER': 'VWATER'
             }
             for orig, std in mapping.items():
                 if orig in df.columns and std not in df.columns:
@@ -517,7 +512,6 @@ if st.session_state.well_data:
             'perf': 'Perforations',
             'unperf_pay': 'Unperf Net Pay',
             'vsh': 'Clay Volume (VSH)',
-            'minerals': 'Mineral Volumes'
         }
 
         # Check which tracks have data
@@ -559,15 +553,6 @@ if st.session_state.well_data:
         if 'UNPERF_NET_PAY' in df.columns and not df['UNPERF_NET_PAY'].isna().all():
             available_tracks.append('unperf_pay')
 
-        # Check if mineral volumes are available
-        mineral_vols = ['VGLAU', 'VILITE', 'VLIME', 'VOIL', 'VSAND', 'VSILT', 'VWATER']
-        if any(col in df.columns for col in mineral_vols):
-            available_tracks.append('minerals')
-            
-        # Check if mineral volumes are available
-        mineral_vols = ['VGLAU', 'VILITE', 'VLIME', 'VOIL', 'VSAND', 'VSILT', 'VWATER']
-        if any(col in df.columns for col in mineral_vols):
-            available_tracks.append('minerals')
 
         # Track selection
         selected_tracks = st.multiselect(
@@ -1015,6 +1000,7 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
 
 
