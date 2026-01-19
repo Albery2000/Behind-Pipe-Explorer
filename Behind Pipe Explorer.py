@@ -796,27 +796,6 @@ if st.session_state.well_data:
                         ax.legend(fontsize=8)
                         ax.set_xlim(0, 100)
 
-                elif track == 'minerals':
-                    ax.set_title("Mineral Volumes (%)", fontsize=10)
-                    mineral_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
-                    mineral_plots = []
-                    mineral_labels = []
-                    
-                    for idx, mineral in enumerate(['VSAND', 'VSILT', 'VGLAU', 'VILITE', 'VLIME', 'VOIL', 'VWATER']):
-                        if mineral in df.columns:
-                            mineral_values = df[mineral].copy()
-                            if mineral_values.max() > 1.5:
-                                mineral_values = mineral_values * 100
-                            plot = ax.plot(mineral_values, df['DEPTH'], color=mineral_colors[idx], label=mineral, lw=1)
-                            mineral_plots.append(plot[0])
-                            mineral_labels.append(mineral)
-                    
-                    if mineral_plots:
-                        ax.legend(mineral_plots, mineral_labels, fontsize=8)
-                        ax.set_xlim(0, 100)
-                    else:
-                        ax.text(0.5, 0.5, 'No mineral volumes', ha='center', va='center', transform=ax.transAxes)
-
             plt.tight_layout(pad=2.0, h_pad=1.0)
             st.pyplot(fig, use_container_width=True)
 
@@ -1036,6 +1015,7 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
 
 
