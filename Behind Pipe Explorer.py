@@ -137,6 +137,7 @@ color_defaults = {
     "unperf_net_pay": "#dc143c",
     "shpor": "#ff9896",
     "pornet": "#c5b0d5"
+    "vsh": "#8c564b"
 }
 colors = {}
 for idx, (label, default) in enumerate(color_defaults.items()):
@@ -507,37 +508,62 @@ if st.session_state.well_data:
         available_tracks = []
         track_labels = {
             'tops': 'Tops',
-            'phit': 'Porosity',
-            'sw': 'Saturation',
+            'phit': 'Porosity (PHIT/PHIE)',
+            'sw': 'Water Saturation (SW)',
             'net_reservoir': 'Net Reservoir',
             'net_pay': 'Net Pay',
             'shpor': 'SHPOR',
             'pornet': 'PORNET',
             'perf': 'Perforations',
             'unperf_pay': 'Unperf Net Pay',
-            'vsh': 'VSH',
+            'vsh': 'Clay Volume (VSH)',
             'minerals': 'Mineral Volumes'
         }
+
+        # Check which tracks have data
         if 'tops' in well and st.session_state.show_colored_tops_track:
             available_tracks.append('tops')
-        if 'PHIT' in df.columns and st.session_state.show_porosity:
+
+        # Check for porosity logs
+        porosity_logs = ['PHIT', 'PHIE']
+        if any(col in df.columns for col in porosity_logs) and st.session_state.show_porosity:
             available_tracks.append('phit')
+
+        # Check for saturation logs
         if 'SW' in df.columns and st.session_state.show_saturation:
             available_tracks.append('sw')
+
+        # Check for VSH
+        if 'VSH' in df.columns:
+            available_tracks.append('vsh')
+
+        # Check for net reservoir
         if 'NET_RESERVOIR' in df.columns and not df['NET_RESERVOIR'].isna().all() and st.session_state.show_net_reservoir:
             available_tracks.append('net_reservoir')
+
+        # Check for net pay
         if 'NET_PAY' in df.columns and not df['NET_PAY'].isna().all() and st.session_state.show_net_pay:
             available_tracks.append('net_pay')
+
+        # Check for special logs
         if 'SHPOR' in df.columns and st.session_state.show_porosity:
             available_tracks.append('shpor')
         if 'PORNET' in df.columns and st.session_state.show_porosity:
             available_tracks.append('pornet')
+
+        # Check for perforations
         if 'PERF' in df.columns and st.session_state.show_perforations:
             available_tracks.append('perf')
+
+        # Check for unperforated net pay
         if 'UNPERF_NET_PAY' in df.columns and not df['UNPERF_NET_PAY'].isna().all():
             available_tracks.append('unperf_pay')
-        if 'VSH' in df.columns:
-            available_tracks.append('vsh')
+
+        # Check if mineral volumes are available
+        mineral_vols = ['VGLAU', 'VILITE', 'VLIME', 'VOIL', 'VSAND', 'VSILT', 'VWATER']
+        if any(col in df.columns for col in mineral_vols):
+            available_tracks.append('minerals')
+            
         # Check if mineral volumes are available
         mineral_vols = ['VGLAU', 'VILITE', 'VLIME', 'VOIL', 'VSAND', 'VSILT', 'VWATER']
         if any(col in df.columns for col in mineral_vols):
@@ -596,36 +622,85 @@ if st.session_state.well_data:
                                     transform=ax.get_yaxis_transform())
                         if len(tops) > 0:
                             ax.axhline(tops.iloc[-1]['DEPTH'], color='black', ls='--', lw=0.8)
-
+                            
+                # In the plotting section for 'phit' track, update it to be more robust:
                 elif track == 'phit':
                     ax.set_title("Porosity (%)", fontsize=10)
+    
+                    # Plot PHIT if available
                     if 'PHIT' in df.columns:
                         phit_values = df['PHIT'].copy()
-                        if phit_values.max() > 1.5:
-                            phit_values = phit_values * 100  # Convert to percentage for display
+                        # Normalize to percentage for display
+                        if phit_values.max() <= 1.0:  # Already in decimal (0-1)
+                            phit_values = phit_values * 100
+                        elif phit_values.max() > 1.0 and phit_values.max() <= 1.5:  # Already in fraction (0-1.5)
+                            phit_values = phit_values * 100
+                        # Plot the curve
                         ax.plot(phit_values, df['DEPTH'], color=colors['porosity'], label='PHIT', lw=1.5)
+    
+                    # Plot PHIE if available (as dashed line)
                     if 'PHIE' in df.columns:
                         phie_values = df['PHIE'].copy()
-                        if phie_values.max() > 1.5:
+                        # Normalize to percentage for display
+                        if phie_values.max() <= 1.0:
+                            phie_values = phie_values * 100
+                        elif phie_values.max() > 1.0 and phie_values.max() <= 1.5:
                             phie_values = phie_values * 100
                         ax.plot(phie_values, df['DEPTH'], color=colors['porosity'], ls='--', label='PHIE', lw=1)
+    
+                    # Add cutoff line if applicable
                     if st.session_state.apply_cutoffs:
-                        ax.axvline(st.session_state.phit_value, color='red', ls=':', lw=1)
-                    ax.legend(fontsize=8)
+                        ax.axvline(st.session_state.phit_value, color='red', ls=':', lw=1, label=f'Cutoff: {st.session_state.phit_value}%')
+
                     ax.set_xlim(0, 50)  # Porosity typically 0-50%
+                    ax.legend(fontsize=8)
+                    ax.grid(True, alpha=0.3)
+
 
                 elif track == 'sw':
                     ax.set_title("Water Saturation (%)", fontsize=10)
                     if 'SW' in df.columns:
                         sw_values = df['SW'].copy()
-                        if sw_values.max() > 1.5:
+                        # Normalize to percentage for display
+                        if sw_values.max() <= 1.0:  # Already in decimal (0-1)
                             sw_values = sw_values * 100
+                        elif sw_values.max() > 1.0 and sw_values.max() <= 1.5:  # Already in fraction (0-1.5)
+                            sw_values = sw_values * 100
+        
+                        # Plot the curve
                         ax.plot(sw_values, df['DEPTH'], color=colors['saturation'], label='Sw', lw=1.5)
-                    if st.session_state.apply_cutoffs:
-                        ax.axvline(st.session_state.sw_value, color='red', ls=':', lw=1)
-                    ax.legend(fontsize=8)
-                    ax.set_xlim(0, 100)
+        
+                        # Add cutoff line if applicable
+                        if st.session_state.apply_cutoffs:
+                            ax.axvline(st.session_state.sw_value, color='red', ls=':', lw=1, label=f'Cutoff: {st.session_state.sw_value}%')
+        
+                        # Set limits and legend
+                        ax.set_xlim(0, 100)
+                        ax.legend(fontsize=8)
+                        ax.grid(True, alpha=0.3)
 
+                elif track == 'vsh':
+                    ax.set_title("Clay Volume - VSH (%)", fontsize=10)
+                    if 'VSH' in df.columns:
+                        vsh_values = df['VSH'].copy()
+                        # Normalize to percentage for display
+                        if vsh_values.max() <= 1.0:  # Already in decimal (0-1)
+                            vsh_values = vsh_values * 100
+                        elif vsh_values.max() > 1.0 and vsh_values.max() <= 1.5:  # Already in fraction (0-1.5)
+                            vsh_values = vsh_values * 100
+                        
+                        # Plot the curve
+                        ax.plot(vsh_values, df['DEPTH'], color='#8c564b', label='VSH', lw=1.5)
+        
+                        # Add cutoff line if applicable
+                        if st.session_state.apply_cutoffs:
+                            ax.axvline(st.session_state.vsh_value, color='red', ls=':', lw=1, label=f'Cutoff: {st.session_state.vsh_value}%')
+        
+                        # Set limits and legend
+                        ax.set_xlim(0, 100)
+                        ax.legend(fontsize=8)
+                        ax.grid(True, alpha=0.3)
+     
                 elif track == 'net_reservoir':
                     ax.set_title("Net Reservoir", fontsize=10)
                     values = df['NET_RESERVOIR'].dropna()
@@ -961,4 +1036,5 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
