@@ -136,7 +136,7 @@ color_defaults = {
     "perforation": "#2ca02c",
     "unperf_net_pay": "#dc143c",
     "shpor": "#ff9896",
-    "pornet": "#c5b0d5"
+    "pornet": "#c5b0d5",
     "vsh": "#8c564b"
 }
 colors = {}
@@ -1036,5 +1036,6 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
 
