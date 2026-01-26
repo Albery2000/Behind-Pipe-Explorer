@@ -120,7 +120,9 @@ with st.sidebar:
         "Show Saturation": True,
         "Show Porosity": True,
         "Show Colored Tops Track": True,
-        "Show Perforations": True
+        "Show Perforations": True,
+        "Show ResFlag": True,
+        "Show PayFlag": True
     }
     for label, default in display_options.items():
         st.session_state[label.lower().replace(" ", "_")] = st.checkbox(label, default, key=label.lower())
@@ -137,7 +139,9 @@ color_defaults = {
     "unperf_net_pay": "#dc143c",
     "shpor": "#ff9896",
     "pornet": "#c5b0d5",
-    "vsh": "#8c564b"
+    "vsh": "#8c564b",
+    "resflag": "#3498db",
+    "payflag": "#e74c3c"
 }
 colors = {}
 for idx, (label, default) in enumerate(color_defaults.items()):
@@ -228,6 +232,7 @@ def process_las_files(files: list) -> None:
                 'VCL': 'VSH',  'NET_PAY': 'NET_PAY','NET_RES': 'NET_RES',
                 'SWT_NET': 'SW_NET', 'VSH': 'VSH', 'NET_PAY': 'NET_PAY',
                 'NET_RES': 'NET_RES', 'SH_POR': 'SHPOR', 'PORNET_D': 'PORNET',
+                'RESFLAG': 'RESFLAG', 'PAYFLAG': 'PAYFLAG'
             }
             for orig, std in mapping.items():
                 if orig in df.columns and std not in df.columns:
@@ -256,6 +261,12 @@ def process_las_files(files: list) -> None:
             # Calculate NET_RESERVOIR and NET_PAY if not already present
             if 'NET_RES' not in df.columns and 'NET_PAY' not in df.columns:
                 df = calculate_net_curves(df)
+            
+            # Handle ResFlag and PayFlag - ensure they're integers (0 or 1)
+            if 'RESFLAG' in df.columns:
+                df['RESFLAG'] = df['RESFLAG'].fillna(0).astype(int)
+            if 'PAYFLAG' in df.columns:
+                df['PAYFLAG'] = df['PAYFLAG'].fillna(0).astype(int)
             
             st.session_state.well_data[well_name] = {
                 'data': df,
@@ -512,6 +523,8 @@ if st.session_state.well_data:
             'perf': 'Perforations',
             'unperf_pay': 'Unperf Net Pay',
             'vsh': 'Clay Volume (VSH)',
+            'resflag': 'Reservoir Flag (RESFLAG)',
+            'payflag': 'Pay Flag (PAYFLAG)',
         }
 
         # Check which tracks have data
@@ -538,6 +551,14 @@ if st.session_state.well_data:
         # Check for net pay
         if 'NET_PAY' in df.columns and not df['NET_PAY'].isna().all() and st.session_state.show_net_pay:
             available_tracks.append('net_pay')
+
+        # Check for ResFlag
+        if 'RESFLAG' in df.columns and not df['RESFLAG'].isna().all() and st.session_state.show_resflag:
+            available_tracks.append('resflag')
+
+        # Check for PayFlag
+        if 'PAYFLAG' in df.columns and not df['PAYFLAG'].isna().all() and st.session_state.show_payflag:
+            available_tracks.append('payflag')
 
         # Check for special logs
         if 'SHPOR' in df.columns and st.session_state.show_porosity:
@@ -608,7 +629,6 @@ if st.session_state.well_data:
                         if len(tops) > 0:
                             ax.axhline(tops.iloc[-1]['DEPTH'], color='black', ls='--', lw=0.8)
                             
-                # In the plotting section for 'phit' track, update it to be more robust:
                 elif track == 'phit':
                     ax.set_title("Porosity (%)", fontsize=10)
     
@@ -640,7 +660,6 @@ if st.session_state.well_data:
                     ax.set_xlim(0, 50)  # Porosity typically 0-50%
                     ax.legend(fontsize=8)
                     ax.grid(True, alpha=0.3)
-
 
                 elif track == 'sw':
                     ax.set_title("Water Saturation (%)", fontsize=10)
@@ -685,7 +704,7 @@ if st.session_state.well_data:
                         ax.set_xlim(0, 100)
                         ax.legend(fontsize=8)
                         ax.grid(True, alpha=0.3)
-     
+
                 elif track == 'net_reservoir':
                     ax.set_title("Net Reservoir", fontsize=10)
                     values = df['NET_RESERVOIR'].dropna()
@@ -707,6 +726,38 @@ if st.session_state.well_data:
                         ax.set_xticks([0, 1])
                     else:
                         st.warning("No valid data for Net Pay to plot.")
+
+                elif track == 'resflag':
+                    ax.set_title("Reservoir Flag", fontsize=10)
+                    values = df['RESFLAG'].dropna()
+                    if not values.empty:
+                        # Ensure values are 0 or 1
+                        values = values.clip(0, 1).astype(int)
+                        ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
+                                         color=colors['resflag'], step='pre', alpha=0.7)
+                        ax.set_xlim(0, 1)
+                        ax.set_xticks([0, 1])
+                        # Add labels
+                        ax.text(0.5, depth_range[0] + 5, 'Reservoir Zone', 
+                                ha='center', va='bottom', fontsize=7)
+                    else:
+                        st.warning("No valid data for Reservoir Flag to plot.")
+
+                elif track == 'payflag':
+                    ax.set_title("Pay Flag", fontsize=10)
+                    values = df['PAYFLAG'].dropna()
+                    if not values.empty:
+                        # Ensure values are 0 or 1
+                        values = values.clip(0, 1).astype(int)
+                        ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
+                                         color=colors['payflag'], step='pre', alpha=0.7)
+                        ax.set_xlim(0, 1)
+                        ax.set_xticks([0, 1])
+                        # Add labels
+                        ax.text(0.5, depth_range[0] + 5, 'Pay Zone', 
+                                ha='center', va='bottom', fontsize=7)
+                    else:
+                        st.warning("No valid data for Pay Flag to plot.")
 
                 elif track == 'perf':
                     ax.set_title("Perforations", fontsize=10)
@@ -769,18 +820,6 @@ if st.session_state.well_data:
                     else:
                         st.warning("PORNET column not found in data.")
 
-                elif track == 'vsh':
-                    ax.set_title("VSH (%)", fontsize=10)
-                    if 'VSH' in df.columns:
-                        vsh_values = df['VSH'].copy()
-                        if vsh_values.max() > 1.5:
-                            vsh_values = vsh_values * 100
-                        ax.plot(vsh_values, df['DEPTH'], color='#8c564b', label='VSH', lw=1.5)
-                        if st.session_state.apply_cutoffs:
-                            ax.axvline(st.session_state.vsh_value, color='red', ls=':', lw=1)
-                        ax.legend(fontsize=8)
-                        ax.set_xlim(0, 100)
-
             plt.tight_layout(pad=2.0, h_pad=1.0)
             st.pyplot(fig, use_container_width=True)
 
@@ -790,7 +829,8 @@ if st.session_state.well_data:
         with tab1:
             st.subheader("Well Log Summary")
             # Select important columns to display
-            important_cols = ['DEPTH', 'PHIT', 'SW', 'VSH', 'NET_RESERVOIR', 'NET_PAY', 'PERF']
+            important_cols = ['DEPTH', 'PHIT', 'SW', 'VSH', 'NET_RESERVOIR', 'NET_PAY', 
+                             'RESFLAG', 'PAYFLAG', 'PERF']
             available_cols = [col for col in important_cols if col in df.columns and not df[col].isna().all()]
             
             # Add mineral volumes if available
@@ -811,6 +851,12 @@ if st.session_state.well_data:
                 st.write(f"Net Pay Thickness: **{net_pay_thickness:.2f} m**")
                 unperf_thickness = df[df['UNPERF_NET_PAY'] == 1]['DEPTH'].diff().sum()
                 st.write(f"Unperforated Net Pay Thickness: **{unperf_thickness:.2f} m**")
+            if 'RESFLAG' in df.columns:
+                resflag_thickness = df[df['RESFLAG'] == 1]['DEPTH'].diff().sum()
+                st.write(f"Reservoir Flag Thickness: **{resflag_thickness:.2f} m**")
+            if 'PAYFLAG' in df.columns:
+                payflag_thickness = df[df['PAYFLAG'] == 1]['DEPTH'].diff().sum()
+                st.write(f"Pay Flag Thickness: **{payflag_thickness:.2f} m**")
 
         with tab2:
             st.subheader("Unperforated Net Pay Intervals")
@@ -873,7 +919,7 @@ if st.session_state.well_data:
                             key="download_all_wells_unperf_standard"
                         )
 
-    # Customized Visualization Tab (similar structure, but allows custom curve selection)
+    # Customized Visualization Tab
     with custom_tab:
         st.info("Customized Visualization allows you to select specific curves for each track. Use the dropdowns below to configure your view.")
         
@@ -889,7 +935,8 @@ if st.session_state.well_data:
             'track4': {'label': 'Track 4', 'default': 'VSH'},
             'track5': {'label': 'Track 5', 'default': 'NET_RESERVOIR'},
             'track6': {'label': 'Track 6', 'default': 'NET_PAY'},
-            'track7': {'label': 'Track 7', 'default': 'PERF'}
+            'track7': {'label': 'Track 7', 'default': 'RESFLAG'},
+            'track8': {'label': 'Track 8', 'default': 'PAYFLAG'}
         }
         
         # Initialize session state
@@ -948,7 +995,7 @@ if st.session_state.well_data:
                     values = df[curve_name].copy()
                     
                     # Determine plot type based on curve name
-                    if curve_name in ['NET_RESERVOIR', 'NET_PAY', 'PERF', 'UNPERF_NET_PAY']:
+                    if curve_name in ['NET_RESERVOIR', 'NET_PAY', 'PERF', 'UNPERF_NET_PAY', 'RESFLAG', 'PAYFLAG']:
                         # Binary track
                         values = values.dropna()
                         if not values.empty:
@@ -958,9 +1005,12 @@ if st.session_state.well_data:
                                 ax.set_xlim(-1.5, 1.5)
                                 ax.set_xticks([-1, 0, 1])
                             else:
+                                # Get color for the specific track
+                                color_key = curve_name.lower().replace('_', '')
+                                color = colors.get(color_key, '#1f77b4')
                                 ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
                                                  step='pre', alpha=0.7,
-                                                 color=colors.get(curve_name.lower().replace('_', ''), '#1f77b4'))
+                                                 color=color)
                                 ax.set_xlim(0, 1)
                                 ax.set_xticks([0, 1])
                     else:
@@ -970,7 +1020,10 @@ if st.session_state.well_data:
                             if values.max() > 1.5 and curve_name not in ['DEPTH']:
                                 values = values * 100
                             
-                            ax.plot(values, df['DEPTH'], lw=1.5)
+                            # Get color for the curve
+                            color_key = curve_name.lower().replace('_', '')
+                            color = colors.get(color_key, '#1f77b4')
+                            ax.plot(values, df['DEPTH'], lw=1.5, color=color)
                             
                             # Add cutoff lines if applicable
                             if curve_name == 'PHIT' and st.session_state.apply_cutoffs:
@@ -998,9 +1051,3 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
-
-
-
-
-
-
