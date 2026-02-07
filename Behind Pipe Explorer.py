@@ -397,15 +397,51 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         if unperf_df.empty:
             continue
         
-        unperf_df['GROUP'] = (unperf_df['DEPTH'].diff() > 0.2).cumsum()
+        # FIXED: Calculate thickness properly by grouping consecutive depths
+        # Sort by depth
+        unperf_df = unperf_df.sort_values('DEPTH')
+        
+        # Create groups for continuous intervals
+        unperf_df['GROUP'] = 0
+        group_num = 0
+        
+        # Start the first group
+        unperf_df.iloc[0, unperf_df.columns.get_loc('GROUP')] = group_num
+        
+        # Group consecutive depths (within 0.6 m to account for typical log spacing)
+        for i in range(1, len(unperf_df)):
+            current_depth = unperf_df.iloc[i]['DEPTH']
+            prev_depth = unperf_df.iloc[i-1]['DEPTH']
+            
+            # If depths are not consecutive (more than 0.6 m apart), start new group
+            if current_depth - prev_depth > 0.6:
+                group_num += 1
+            
+            unperf_df.iloc[i, unperf_df.columns.get_loc('GROUP')] = group_num
+        
+        # Now group by the GROUP column
         grouped = unperf_df.groupby('GROUP').agg(
             Top=('DEPTH', 'min'),
             Base=('DEPTH', 'max'),
             Avg_Porosity=('PHIT', 'mean') if 'PHIT' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
-            Avg_Sw=('SW', 'mean') if 'SW' in unperf_df.columns else ('DEPTH', lambda x: np.nan)
+            Avg_Sw=('SW', 'mean') if 'SW' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
+            Avg_VSH=('VSH', 'mean') if 'VSH' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
+            Data_Points=('DEPTH', 'count')  # Number of data points in the interval
         ).reset_index(drop=True)
         
+        # Calculate thickness: Base - Top
         grouped['Thickness (m)'] = (grouped['Base'] - grouped['Top']).round(2)
+        
+        # If we have only one data point in the interval, we need to estimate thickness
+        # based on typical log spacing (usually 0.1524 m or 0.5 ft)
+        for idx, row in grouped.iterrows():
+            if row['Data_Points'] == 1:
+                # Estimate thickness as typical log spacing (0.1524 m for metric logs)
+                grouped.at[idx, 'Thickness (m)'] = 0.1524
+                # Adjust Base to be Top + estimated thickness
+                grouped.at[idx, 'Base'] = row['Top'] + 0.1524
+        
+        # Apply AIT cutoff if enabled
         if st.session_state.apply_cutoffs:
             grouped = grouped[grouped['Thickness (m)'] >= st.session_state.ait_cutoff]
         
@@ -414,24 +450,34 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         
         grouped['Well'] = well_name
         
+        # Determine zone from tops
         grouped['Zone'] = 'Unknown'
         if 'tops' in well:
             tops = well['tops'].sort_values('DEPTH')
             for i, row in grouped.iterrows():
+                # Find the top that is just above or equal to our interval Top
                 valid_tops = tops[tops['DEPTH'] <= row['Top']]
                 if not valid_tops.empty:
                     grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
         
-        grouped = grouped[['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw']]
-        grouped['Avg_Porosity'] = grouped['Avg_Porosity'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
-        grouped['Avg_Sw'] = grouped['Avg_Sw'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
+        # Prepare final columns
+        final_columns = ['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH']
+        grouped = grouped[final_columns]
+        
+        # Convert to percentages for display
+        if 'Avg_Porosity' in grouped.columns:
+            grouped['Avg_Porosity'] = grouped['Avg_Porosity'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
+        if 'Avg_Sw' in grouped.columns:
+            grouped['Avg_Sw'] = grouped['Avg_Sw'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
+        if 'Avg_VSH' in grouped.columns:
+            grouped['Avg_VSH'] = grouped['Avg_VSH'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
         
         all_intervals.append(grouped)
     
     if all_intervals:
         result = pd.concat(all_intervals, ignore_index=True)
     else:
-        result = pd.DataFrame(columns=['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw'])
+        result = pd.DataFrame(columns=['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH'])
     
     return result
 
@@ -860,64 +906,171 @@ if st.session_state.well_data:
 
         with tab2:
             st.subheader("Unperforated Net Pay Intervals")
-            unperf_df = df[df['UNPERF_NET_PAY'] == 1].copy() if 'UNPERF_NET_PAY' in df.columns else pd.DataFrame()
-            if unperf_df.empty:
-                st.success("All net pay zones have been perforated! 🎉")
-            else:
-                unperf_df['GROUP'] = (unperf_df['DEPTH'].diff() > 0.2).cumsum()
+            
+            # Create two tabs within this tab: one for selected well, one for all wells
+            well_tab, all_wells_tab = st.tabs(["Selected Well", "All Wells"])
+            
+            with well_tab:
+                st.write(f"**Unperforated Net Pay Intervals for {selected_well}**")
+                unperf_df = df[df['UNPERF_NET_PAY'] == 1].copy() if 'UNPERF_NET_PAY' in df.columns else pd.DataFrame()
                 
-                grouped = unperf_df.groupby('GROUP').agg(
-                    Top=('DEPTH', 'min'),
-                    Base=('DEPTH', 'max'),
-                    Avg_Porosity=('PHIT', 'mean') if 'PHIT' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
-                    Avg_Sw=('SW', 'mean') if 'SW' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
-                    Avg_VSH=('VSH', 'mean') if 'VSH' in unperf_df.columns else ('DEPTH', lambda x: np.nan)
-                ).reset_index(drop=True)
-                
-                grouped['Thickness (m)'] = (grouped['Base'] - grouped['Top']).round(2)
-                if st.session_state.apply_cutoffs:
-                    grouped = grouped[grouped['Thickness (m)'] >= st.session_state.ait_cutoff]
-                
-                if grouped.empty:
-                    st.info(f"No unperforated net pay intervals meet the AIT cutoff of {st.session_state.ait_cutoff} meters.")
+                if unperf_df.empty:
+                    st.success(f"No unperforated net pay found in {selected_well}! 🎉")
                 else:
-                    grouped['Well'] = selected_well
+                    # Sort by depth
+                    unperf_df = unperf_df.sort_values('DEPTH')
                     
-                    grouped['Zone'] = 'Unknown'
-                    if 'tops' in well:
-                        tops = well['tops'].sort_values('DEPTH')
-                        for i, row in grouped.iterrows():
-                            valid_tops = tops[tops['DEPTH'] <= row['Top']]
-                            if not valid_tops.empty:
-                                grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
+                    # Create groups for continuous intervals
+                    unperf_df['GROUP'] = 0
+                    group_num = 0
                     
-                    grouped = grouped[['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH']]
-                    # Convert to percentages for display
-                    for col in ['Avg_Porosity', 'Avg_Sw', 'Avg_VSH']:
-                        if col in grouped.columns:
-                            grouped[col] = grouped[col].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
+                    # Start the first group
+                    unperf_df.iloc[0, unperf_df.columns.get_loc('GROUP')] = group_num
                     
-                    st.dataframe(grouped, use_container_width=True)
+                    # Group consecutive depths (within 0.6 m to account for typical log spacing)
+                    for i in range(1, len(unperf_df)):
+                        current_depth = unperf_df.iloc[i]['DEPTH']
+                        prev_depth = unperf_df.iloc[i-1]['DEPTH']
+                        
+                        # If depths are not consecutive (more than 0.6 m apart), start new group
+                        if current_depth - prev_depth > 0.6:
+                            group_num += 1
+                        
+                        unperf_df.iloc[i, unperf_df.columns.get_loc('GROUP')] = group_num
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        csv = grouped.to_csv(index=False).encode('utf-8')
+                    # Now group by the GROUP column
+                    grouped = unperf_df.groupby('GROUP').agg(
+                        Top=('DEPTH', 'min'),
+                        Base=('DEPTH', 'max'),
+                        Avg_Porosity=('PHIT', 'mean') if 'PHIT' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
+                        Avg_Sw=('SW', 'mean') if 'SW' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
+                        Avg_VSH=('VSH', 'mean') if 'VSH' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
+                        Data_Points=('DEPTH', 'count')  # Number of data points in the interval
+                    ).reset_index(drop=True)
+                    
+                    # Calculate thickness: Base - Top
+                    grouped['Thickness (m)'] = (grouped['Base'] - grouped['Top']).round(2)
+                    
+                    # If we have only one data point in the interval, estimate thickness
+                    for idx, row in grouped.iterrows():
+                        if row['Data_Points'] == 1:
+                            # Estimate thickness as typical log spacing
+                            grouped.at[idx, 'Thickness (m)'] = 0.1524
+                            # Adjust Base to be Top + estimated thickness
+                            grouped.at[idx, 'Base'] = row['Top'] + 0.1524
+                    
+                    # Apply AIT cutoff if enabled
+                    if st.session_state.apply_cutoffs:
+                        grouped = grouped[grouped['Thickness (m)'] >= st.session_state.ait_cutoff]
+                    
+                    if grouped.empty:
+                        st.info(f"No unperforated net pay intervals meet the AIT cutoff of {st.session_state.ait_cutoff} meters.")
+                    else:
+                        grouped['Well'] = selected_well
+                        
+                        grouped['Zone'] = 'Unknown'
+                        if 'tops' in well:
+                            tops = well['tops'].sort_values('DEPTH')
+                            for i, row in grouped.iterrows():
+                                valid_tops = tops[tops['DEPTH'] <= row['Top']]
+                                if not valid_tops.empty:
+                                    grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
+                        
+                        display_cols = ['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH']
+                        display_df = grouped[display_cols].copy()
+                        
+                        # Convert to percentages for display
+                        for col in ['Avg_Porosity', 'Avg_Sw', 'Avg_VSH']:
+                            if col in display_df.columns:
+                                display_df[col] = display_df[col].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
+                        
+                        st.dataframe(display_df, use_container_width=True)
+                        
+                        # Summary statistics
+                        st.subheader("Summary Statistics")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            total_thickness = grouped['Thickness (m)'].sum()
+                            st.metric("Total Unperf Thickness", f"{total_thickness:.2f} m")
+                        with col2:
+                            num_intervals = len(grouped)
+                            st.metric("Number of Intervals", num_intervals)
+                        with col3:
+                            avg_thickness = grouped['Thickness (m)'].mean() if num_intervals > 0 else 0
+                            st.metric("Average Interval Thickness", f"{avg_thickness:.2f} m")
+                        
+                        # Download button for selected well
+                        csv = display_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
-                            "Download Unperforated Intervals",
+                            f"Download {selected_well} Unperforated Intervals",
                             csv,
-                            "unperforated_net_pay.csv",
+                            f"{selected_well}_unperforated_net_pay.csv",
                             "text/csv",
-                            key="download_unperf_standard"
+                            key="download_selected_well_unperf"
                         )
+            
+            with all_wells_tab:
+                st.write("**Unperforated Net Pay Intervals for ALL Wells**")
+                
+                # Get unperforated intervals for all wells
+                all_intervals_df = get_all_wells_unperf_intervals()
+                
+                if all_intervals_df.empty:
+                    st.info("No unperforated net pay intervals found across all wells.")
+                else:
+                    # Display the dataframe
+                    st.dataframe(all_intervals_df, use_container_width=True)
+                    
+                    # Summary statistics for all wells
+                    st.subheader("Summary Statistics (All Wells)")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        total_thickness_all = all_intervals_df['Thickness (m)'].sum()
+                        st.metric("Total Thickness (All Wells)", f"{total_thickness_all:.2f} m")
+                    
                     with col2:
-                        all_wells_csv = get_all_wells_unperf_intervals().to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            "Download All Wells Unperforated Intervals",
-                            all_wells_csv,
-                            "all_wells_unperforated_net_pay.csv",
-                            "text/csv",
-                            key="download_all_wells_unperf_standard"
-                        )
+                        num_intervals_all = len(all_intervals_df)
+                        st.metric("Total Intervals (All Wells)", num_intervals_all)
+                    
+                    with col3:
+                        avg_thickness_all = all_intervals_df['Thickness (m)'].mean() if num_intervals_all > 0 else 0
+                        st.metric("Avg Thickness (All Wells)", f"{avg_thickness_all:.2f} m")
+                    
+                    with col4:
+                        num_wells = all_intervals_df['Well'].nunique()
+                        st.metric("Wells with Unperf Pay", num_wells)
+                    
+                    # Breakdown by well
+                    st.subheader("Breakdown by Well")
+                    well_summary = all_intervals_df.groupby('Well').agg(
+                        Intervals=('Thickness (m)', 'count'),
+                        Total_Thickness=('Thickness (m)', 'sum'),
+                        Avg_Porosity=('Avg_Porosity', 'mean'),
+                        Avg_Sw=('Avg_Sw', 'mean')
+                    ).round(2).reset_index()
+                    
+                    st.dataframe(well_summary, use_container_width=True)
+                    
+                    # Download button for all wells
+                    csv_all = all_intervals_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        "Download ALL Wells Unperforated Intervals",
+                        csv_all,
+                        "all_wells_unperforated_net_pay.csv",
+                        "text/csv",
+                        key="download_all_wells_unperf"
+                    )
+                    
+                    # Also provide an option to download the well summary
+                    csv_summary = well_summary.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        "Download Well Summary",
+                        csv_summary,
+                        "unperf_pay_well_summary.csv",
+                        "text/csv",
+                        key="download_well_summary"
+                    )
 
     # Customized Visualization Tab
     with custom_tab:
