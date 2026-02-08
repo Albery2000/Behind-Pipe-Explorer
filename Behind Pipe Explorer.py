@@ -740,17 +740,36 @@ if st.session_state.well_data:
                         else:
                             st.warning("No PAYFLAG data to plot.")
 
+                # Update the PERF track plotting section in the Standard Visualization Tab:
+
                 elif track == 'perf':
                     ax.set_title("Perforations", fontsize=10)
                     if 'PERF' in display_df.columns:
                         values = display_df['PERF'].dropna()
                         if not values.empty:
-                            ax.step(values, display_df.loc[values.index, 'DEPTH'], where='mid', 
-                                   color=colors['perforation'], lw=1.5)
+                            # Create separate arrays for open and plugged perforations
+                            open_mask = values == 1
+                            plugged_mask = values == -1
+            
+                            # Plot open perforations in green
+                            if open_mask.any():
+                                open_depths = display_df.loc[values[open_mask].index, 'DEPTH']
+                                open_values = values[open_mask]
+                                ax.step(open_values, open_depths, where='mid', 
+                                       color=colors['perforation'], lw=2, label='Open')
+            
+                            # Plot plugged perforations in red
+                            if plugged_mask.any():
+                                plugged_depths = display_df.loc[values[plugged_mask].index, 'DEPTH']
+                                plugged_values = values[plugged_mask]
+                                ax.step(plugged_values, plugged_depths, where='mid', 
+                                       color='red', lw=2, label='Plugged')
+            
                             ax.set_xlim(-1.5, 1.5)
-                            ax.text(-1, depth_range[0], 'plugged perf', ha='right', va='bottom', fontsize=8)
-                            ax.text(1, depth_range[0], 'open perf', ha='left', va='bottom', fontsize=8)
+                            ax.text(-1, depth_range[0], 'plugged perf', ha='right', va='bottom', fontsize=8, color='red')
+                            ax.text(1, depth_range[0], 'open perf', ha='left', va='bottom', fontsize=8, color=colors['perforation'])
                             ax.set_xticks([-1, 0, 1])
+                            ax.legend(fontsize=8)
                         else:
                             st.warning("No perforation data to plot.")
 
@@ -1150,3 +1169,4 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
