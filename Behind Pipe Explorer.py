@@ -740,7 +740,7 @@ if st.session_state.well_data:
                         else:
                             st.warning("No PAYFLAG data to plot.")
 
-              elif track == 'perf':
+                elif track == 'perf':
                     ax.set_title("Perforations", fontsize=10)
                     if 'PERF' in display_df.columns:
                         values = display_df['PERF'].dropna()
@@ -1150,5 +1150,6 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
+
 
 
