@@ -328,7 +328,7 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         
         # Apply cutoffs if selected (only affects calculations, not PAYFLAG)
         if st.session_state.apply_cutoffs:
-            # We don't recalculate PAYFLAG, but we can filter based on cutoffs
+            # Start with all rows and columns
             filtered_df = df.copy()
             conditions = []
             
@@ -356,12 +356,13 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
             # Apply conditions if we have them
             if conditions:
                 filter_mask = np.all(conditions, axis=0)
-                filtered_df = filtered_df[filter_mask]
+                # Filter rows but keep all columns (including DEPTH)
+                filtered_df = filtered_df[filter_mask].copy()
             
             # Use PAYFLAG from CPI
             if 'PAYFLAG' in filtered_df.columns:
                 pay_mask = filtered_df['PAYFLAG'] == 1
-                filtered_df = filtered_df[pay_mask]
+                filtered_df = filtered_df[pay_mask].copy()
         else:
             # Simply use PAYFLAG from CPI
             if 'PAYFLAG' in df.columns:
@@ -369,14 +370,21 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
             else:
                 filtered_df = pd.DataFrame()
         
+        if filtered_df.empty:
+            continue
+            
         # Process perforations if available
         if 'PERF' not in filtered_df.columns:
             filtered_df['PERF'] = 0
         
         if 'perforations' in well and st.session_state.show_perforations:
-            for _, row in well['perforations'].iterrows():
-                filtered_df.loc[(filtered_df['DEPTH'] >= row['TOP']) & 
-                               (filtered_df['DEPTH'] <= row['BASE']), 'PERF'] = row['PERF_VALUE']
+            # Ensure DEPTH column exists before processing perforations
+            if 'DEPTH' in filtered_df.columns:
+                for _, row in well['perforations'].iterrows():
+                    filtered_df.loc[(filtered_df['DEPTH'] >= row['TOP']) & 
+                                   (filtered_df['DEPTH'] <= row['BASE']), 'PERF'] = row['PERF_VALUE']
+            else:
+                st.warning(f"No DEPTH column found in filtered data for {well_name}. Skipping perforation processing.")
         
         # Calculate unperforated net pay
         filtered_df['UNPERF_NET_PAY'] = (filtered_df['PERF'] == 0).astype(int)
@@ -1150,6 +1158,3 @@ st.markdown('''
 **Streamlit App** – Interactive well log, tops, and perforation visualization.  
 Developed by Egypt Technical Team.
 ''', unsafe_allow_html=True)
-
-
-
