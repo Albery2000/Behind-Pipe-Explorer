@@ -153,58 +153,22 @@ for idx, (label, default) in enumerate(color_defaults.items()):
             help=f"Choose a color for the {label.replace('_', ' ')} track."
         )
 
-# Function to calculate Net Reservoir and Net Pay
-def calculate_net_curves(df):
-    """Calculate NET_RESERVOIR and NET_PAY based on available curves"""
+# Function to calculate unperforated pay (using PAYFLAG from CPI)
+def calculate_unperf_pay(df):
+    """Calculate unperforated net pay using PAYFLAG from CPI"""
     df = df.copy()
     
-    # Create empty columns initially
-    df['NET_RESERVOIR'] = 0
-    df['NET_PAY'] = 0
+    # Create PERF column if not exists
+    if 'PERF' not in df.columns:
+        df['PERF'] = 0
     
-    # --- Calculate NET RESERVOIR ---
-    # Method 1: If VSH is available, use it with default cutoff (50%)
-    if 'VSH' in df.columns:
-        # Ensure VSH is in decimal (0-1) range
-        vsh_series = df['VSH'].copy()
-        if vsh_series.max() > 1.5:  # If in percentage, convert to decimal
-            vsh_series = vsh_series / 100
-        
-        # Apply cutoff for net reservoir (default: VSH <= 0.5)
-        df['NET_RESERVOIR'] = (vsh_series <= 0.5).astype(int)
-    
-    # Method 2: If mineral volumes are available, calculate VSH from them
-    elif all(col in df.columns for col in ['VGlau', 'VIlite', 'VSand', 'VSilt']):
-        # Calculate total shale/clay volume
-        df['VSH_CALC'] = df[['VGlau', 'VIlite']].sum(axis=1, skipna=True)
-        if df['VSH_CALC'].max() > 1.5:  # If in percentage, convert to decimal
-            df['VSH_CALC'] = df['VSH_CALC'] / 100
-        df['NET_RESERVOIR'] = (df['VSH_CALC'] <= 0.5).astype(int)
-    
-    # --- Calculate NET PAY ---
-    # Need PHIT, SW, and NET_RESERVOIR
-    conditions = []
-    
-    # Condition 1: NET_RESERVOIR must be 1
-    conditions.append(df['NET_RESERVOIR'] == 1)
-    
-    # Condition 2: PHIT >= cutoff (default: 0.1 or 10%)
-    if 'PHIT' in df.columns:
-        phit_series = df['PHIT'].copy()
-        if phit_series.max() > 1.5:  # If in percentage, convert to decimal
-            phit_series = phit_series / 100
-        conditions.append(phit_series >= 0.1)  # Default porosity cutoff 10%
-    
-    # Condition 3: SW <= cutoff (default: 0.5 or 50%)
-    if 'SW' in df.columns:
-        sw_series = df['SW'].copy()
-        if sw_series.max() > 1.5:  # If in percentage, convert to decimal
-            sw_series = sw_series / 100
-        conditions.append(sw_series <= 0.5)  # Default Sw cutoff 50%
-    
-    # If we have at least 2 conditions (NET_RESERVOIR + one more), calculate NET_PAY
-    if len(conditions) >= 2:
-        df['NET_PAY'] = np.all(conditions, axis=0).astype(int)
+    # Calculate unperforated net pay using PAYFLAG
+    if 'PAYFLAG' in df.columns:
+        # Ensure PAYFLAG is binary (0 or 1)
+        df['PAYFLAG'] = df['PAYFLAG'].fillna(0).clip(0, 1).astype(int)
+        df['UNPERF_NET_PAY'] = ((df['PAYFLAG'] == 1) & (df['PERF'] == 0)).astype(int)
+    else:
+        df['UNPERF_NET_PAY'] = 0
     
     return df
 
@@ -222,17 +186,21 @@ def process_las_files(files: list) -> None:
             df = las.df().reset_index().rename(columns={las.df().index.name: 'DEPTH'})
             df.columns = df.columns.str.strip().str.upper()
 
-            # Standardize column names
+            # Standardize column names with focus on CPI-derived flags
             mapping = {
                 'PHIT_D': 'PHIT', 'PHIE_T': 'PHIT','PHI_T': 'PHIT',
                 'PHI_TOTAL': 'PHIT', 'SW_AR': 'SW','PHIE_D': 'PHIE',
                 'PHIE_T': 'PHIE','SW_AR': 'SW', 'SW_T': 'SW',
                 'SWT': 'SW', 'VSH_GR': 'VSH',
                 'VSHL': 'VSH',
-                'VCL': 'VSH',  'NET_PAY': 'NET_PAY','NET_RES': 'NET_RES',
-                'SWT_NET': 'SW_NET', 'VSH': 'VSH', 'NET_PAY': 'NET_PAY',
-                'NET_RES': 'NET_RES', 'SH_POR': 'SHPOR', 'PORNET_D': 'PORNET',
-                'RESFLAG': 'RESFLAG', 'PAYFLAG': 'PAYFLAG'
+                'VCL': 'VSH', 
+                'SWT_NET': 'SW_NET', 'VSH': 'VSH',
+                'SH_POR': 'SHPOR', 'PORNET_D': 'PORNET',
+                'RESFLAG': 'RESFLAG', 'PAYFLAG': 'PAYFLAG',
+                # Common CPI flag names
+                'PAY_FLAG': 'PAYFLAG', 'PAY': 'PAYFLAG', 'PAYFLG': 'PAYFLAG',
+                'RES_FLAG': 'RESFLAG', 'RES': 'RESFLAG', 'RESFLG': 'RESFLAG',
+                'RESERVOIR_FLAG': 'RESFLAG'
             }
             for orig, std in mapping.items():
                 if orig in df.columns and std not in df.columns:
@@ -258,15 +226,24 @@ def process_las_files(files: list) -> None:
                             df[std] = df[cand]
                             break
             
-            # Calculate NET_RESERVOIR and NET_PAY if not already present
-            if 'NET_RES' not in df.columns and 'NET_PAY' not in df.columns:
-                df = calculate_net_curves(df)
+            # Ensure RESFLAG and PAYFLAG are properly formatted
+            for flag in ['RESFLAG', 'PAYFLAG']:
+                if flag in df.columns:
+                    # Convert to binary (0 or 1)
+                    df[flag] = df[flag].fillna(0)
+                    # Handle various formats
+                    if df[flag].dtype == object:
+                        # String values like 'YES', 'NO', '1', '0'
+                        df[flag] = df[flag].astype(str).str.upper()
+                        df[flag] = df[flag].map({
+                            'YES': 1, 'Y': 1, '1': 1, 'TRUE': 1, 'T': 1,
+                            'NO': 0, 'N': 0, '0': 0, 'FALSE': 0, 'F': 0
+                        }).fillna(0)
+                    # Ensure integer and clip to 0-1
+                    df[flag] = df[flag].astype(float).fillna(0).clip(0, 1).astype(int)
             
-            # Handle ResFlag and PayFlag - ensure they're integers (0 or 1)
-            if 'RESFLAG' in df.columns:
-                df['RESFLAG'] = df['RESFLAG'].fillna(0).astype(int)
-            if 'PAYFLAG' in df.columns:
-                df['PAYFLAG'] = df['PAYFLAG'].fillna(0).astype(int)
+            # Calculate unperforated net pay
+            df = calculate_unperf_pay(df)
             
             st.session_state.well_data[well_name] = {
                 'data': df,
@@ -278,6 +255,10 @@ def process_las_files(files: list) -> None:
             # Show available curves for debugging
             with st.sidebar.expander(f"Curves in {well_name}"):
                 st.write(f"Available curves: {', '.join(df.columns)}")
+                if 'RESFLAG' in df.columns:
+                    st.write(f"RESFLAG values: {df['RESFLAG'].unique()}")
+                if 'PAYFLAG' in df.columns:
+                    st.write(f"PAYFLAG values: {df['PAYFLAG'].unique()}")
                 
         except Exception as e:
             st.error(f"Failed to process {file.name}: {str(e)}")
@@ -339,109 +320,110 @@ def process_perforations(perf_file) -> None:
     except Exception as e:
         st.error(f"Failed to read perforation file: {str(e)}")
 
-# Function to get unperforated net pay intervals for all wells
+# Function to get unperforated net pay intervals for all wells using PAYFLAG
 def get_all_wells_unperf_intervals() -> pd.DataFrame:
     all_intervals = []
     for well_name, well in st.session_state.well_data.items():
         df = well['data'].copy()
         
+        # Apply cutoffs if selected (only affects calculations, not PAYFLAG)
         if st.session_state.apply_cutoffs:
-            # Apply custom cutoffs
+            # We don't recalculate PAYFLAG, but we can filter based on cutoffs
+            filtered_df = df.copy()
             conditions = []
             
-            # NET RESERVOIR condition (VSH cutoff)
-            if 'VSH' in df.columns:
-                vsh_series = df['VSH'].copy()
-                if vsh_series.max() > 1.5:
-                    vsh_series = vsh_series / 100
-                df['NET_RESERVOIR'] = (vsh_series <= st.session_state.vsh_value / 100).astype(int)
-                conditions.append(df['NET_RESERVOIR'] == 1)
-            elif 'NET_RESERVOIR' in df.columns:
-                conditions.append(df['NET_RESERVOIR'] == 1)
-            
             # Porosity condition
-            if 'PHIT' in df.columns:
-                phit_series = df['PHIT'].copy()
+            if 'PHIT' in filtered_df.columns:
+                phit_series = filtered_df['PHIT'].copy()
                 if phit_series.max() > 1.5:
                     phit_series = phit_series / 100
                 conditions.append(phit_series >= st.session_state.phit_value / 100)
             
             # Sw condition
-            if 'SW' in df.columns:
-                sw_series = df['SW'].copy()
+            if 'SW' in filtered_df.columns:
+                sw_series = filtered_df['SW'].copy()
                 if sw_series.max() > 1.5:
                     sw_series = sw_series / 100
                 conditions.append(sw_series <= st.session_state.sw_value / 100)
             
-            if len(conditions) >= 2:
-                df['NET_PAY'] = np.all(conditions, axis=0).astype(int)
-            else:
-                df['NET_PAY'] = 0
-        else:
-            # Use pre-calculated values
-            if 'NET_RESERVOIR' not in df.columns:
-                df = calculate_net_curves(df)
+            # VSH condition for reservoir quality
+            if 'VSH' in filtered_df.columns:
+                vsh_series = filtered_df['VSH'].copy()
+                if vsh_series.max() > 1.5:
+                    vsh_series = vsh_series / 100
+                conditions.append(vsh_series <= st.session_state.vsh_value / 100)
             
-            if 'NET_PAY' not in df.columns:
-                df['NET_PAY'] = 0
+            # Apply conditions if we have them
+            if conditions:
+                filter_mask = np.all(conditions, axis=0)
+                filtered_df = filtered_df[filter_mask]
+            
+            # Use PAYFLAG from CPI
+            if 'PAYFLAG' in filtered_df.columns:
+                pay_mask = filtered_df['PAYFLAG'] == 1
+                filtered_df = filtered_df[pay_mask]
+        else:
+            # Simply use PAYFLAG from CPI
+            if 'PAYFLAG' in df.columns:
+                filtered_df = df[df['PAYFLAG'] == 1].copy()
+            else:
+                filtered_df = pd.DataFrame()
         
-        # Process perforations
-        df['PERF'] = 0
+        # Process perforations if available
+        if 'PERF' not in filtered_df.columns:
+            filtered_df['PERF'] = 0
+        
         if 'perforations' in well and st.session_state.show_perforations:
             for _, row in well['perforations'].iterrows():
-                df.loc[(df['DEPTH'] >= row['TOP']) & (df['DEPTH'] <= row['BASE']), 'PERF'] = row['PERF_VALUE']
+                filtered_df.loc[(filtered_df['DEPTH'] >= row['TOP']) & 
+                               (filtered_df['DEPTH'] <= row['BASE']), 'PERF'] = row['PERF_VALUE']
         
-        df['UNPERF_NET_PAY'] = ((df['NET_PAY'] == 1) & (df['PERF'] == 0)).astype(int)
+        # Calculate unperforated net pay
+        filtered_df['UNPERF_NET_PAY'] = (filtered_df['PERF'] == 0).astype(int)
         
-        unperf_df = df[df['UNPERF_NET_PAY'] == 1].copy()
+        # Filter for unperforated intervals only
+        unperf_df = filtered_df[filtered_df['UNPERF_NET_PAY'] == 1].copy()
         if unperf_df.empty:
             continue
         
-        # FIXED: Calculate thickness properly by grouping consecutive depths
-        # Sort by depth
+        # Sort by depth and create continuous intervals
         unperf_df = unperf_df.sort_values('DEPTH')
-        
-        # Create groups for continuous intervals
         unperf_df['GROUP'] = 0
         group_num = 0
         
-        # Start the first group
-        unperf_df.iloc[0, unperf_df.columns.get_loc('GROUP')] = group_num
-        
-        # Group consecutive depths (within 0.6 m to account for typical log spacing)
-        for i in range(1, len(unperf_df)):
-            current_depth = unperf_df.iloc[i]['DEPTH']
-            prev_depth = unperf_df.iloc[i-1]['DEPTH']
+        if len(unperf_df) > 0:
+            unperf_df.iloc[0, unperf_df.columns.get_loc('GROUP')] = group_num
             
-            # If depths are not consecutive (more than 0.6 m apart), start new group
-            if current_depth - prev_depth > 0.6:
-                group_num += 1
-            
-            unperf_df.iloc[i, unperf_df.columns.get_loc('GROUP')] = group_num
+            for i in range(1, len(unperf_df)):
+                current_depth = unperf_df.iloc[i]['DEPTH']
+                prev_depth = unperf_df.iloc[i-1]['DEPTH']
+                
+                # If depths are not consecutive (more than 0.6 m apart), start new group
+                if current_depth - prev_depth > 0.6:
+                    group_num += 1
+                
+                unperf_df.iloc[i, unperf_df.columns.get_loc('GROUP')] = group_num
         
-        # Now group by the GROUP column
+        # Group by the GROUP column
         grouped = unperf_df.groupby('GROUP').agg(
             Top=('DEPTH', 'min'),
             Base=('DEPTH', 'max'),
             Avg_Porosity=('PHIT', 'mean') if 'PHIT' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
             Avg_Sw=('SW', 'mean') if 'SW' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
             Avg_VSH=('VSH', 'mean') if 'VSH' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
-            Data_Points=('DEPTH', 'count')  # Number of data points in the interval
+            Data_Points=('DEPTH', 'count')
         ).reset_index(drop=True)
         
-        # Calculate thickness: Base - Top
+        # Calculate thickness
         grouped['Thickness (m)'] = (grouped['Base'] - grouped['Top']).round(2)
         
-        # If we have only one data point in the interval, we need to estimate thickness
-        # based on typical log spacing (usually 0.1524 m or 0.5 ft)
+        # Estimate thickness for single-point intervals
         for idx, row in grouped.iterrows():
             if row['Data_Points'] == 1:
-                # Estimate thickness as typical log spacing (0.1524 m for metric logs)
                 grouped.at[idx, 'Thickness (m)'] = 0.1524
-                # Adjust Base to be Top + estimated thickness
                 grouped.at[idx, 'Base'] = row['Top'] + 0.1524
         
-        # Apply AIT cutoff if enabled
+        # Apply AIT cutoff
         if st.session_state.apply_cutoffs:
             grouped = grouped[grouped['Thickness (m)'] >= st.session_state.ait_cutoff]
         
@@ -455,7 +437,6 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         if 'tops' in well:
             tops = well['tops'].sort_values('DEPTH')
             for i, row in grouped.iterrows():
-                # Find the top that is just above or equal to our interval Top
                 valid_tops = tops[tops['DEPTH'] <= row['Top']]
                 if not valid_tops.empty:
                     grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
@@ -465,12 +446,9 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         grouped = grouped[final_columns]
         
         # Convert to percentages for display
-        if 'Avg_Porosity' in grouped.columns:
-            grouped['Avg_Porosity'] = grouped['Avg_Porosity'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
-        if 'Avg_Sw' in grouped.columns:
-            grouped['Avg_Sw'] = grouped['Avg_Sw'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
-        if 'Avg_VSH' in grouped.columns:
-            grouped['Avg_VSH'] = grouped['Avg_VSH'].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
+        for col in ['Avg_Porosity', 'Avg_Sw', 'Avg_VSH']:
+            if col in grouped.columns:
+                grouped[col] = grouped[col].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
         
         all_intervals.append(grouped)
     
@@ -495,61 +473,61 @@ if st.session_state.well_data:
     well = st.session_state.well_data[selected_well]
     df = well['data'].copy()
     
-    # Ensure NET_RESERVOIR and NET_PAY are calculated
-    if 'NET_RESERVOIR' not in df.columns or 'NET_PAY' not in df.columns:
-        df = calculate_net_curves(df)
-        st.session_state.well_data[selected_well]['data'] = df
-
-    # Apply cutoffs if selected
-    if st.session_state.apply_cutoffs:
-        df = df.copy()
-        conditions = []
-        
-        # NET RESERVOIR condition
-        if 'VSH' in df.columns:
-            vsh_series = df['VSH'].copy()
-            if vsh_series.max() > 1.5:
-                vsh_series = vsh_series / 100
-            df['NET_RESERVOIR'] = (vsh_series <= st.session_state.vsh_value / 100).astype(int)
-            conditions.append(df['NET_RESERVOIR'] == 1)
-        
-        # Porosity condition
-        if 'PHIT' in df.columns:
-            phit_series = df['PHIT'].copy()
-            if phit_series.max() > 1.5:
-                phit_series = phit_series / 100
-            conditions.append(phit_series >= st.session_state.phit_value / 100)
-        
-        # Sw condition
-        if 'SW' in df.columns:
-            sw_series = df['SW'].copy()
-            if sw_series.max() > 1.5:
-                sw_series = sw_series / 100
-            conditions.append(sw_series <= st.session_state.sw_value / 100)
-        
-        if len(conditions) >= 2:
-            df['NET_PAY'] = np.all(conditions, axis=0).astype(int)
-        else:
-            df['NET_PAY'] = df.get('NET_PAY', 0)
-    
     # Process perforations
     df['PERF'] = 0
     if 'perforations' in well and st.session_state.show_perforations:
         for _, row in well['perforations'].iterrows():
             df.loc[(df['DEPTH'] >= row['TOP']) & (df['DEPTH'] <= row['BASE']), 'PERF'] = row['PERF_VALUE']
     
-    df['UNPERF_NET_PAY'] = ((df['NET_PAY'] == 1) & (df['PERF'] == 0)).astype(int)
+    # Calculate unperforated net pay using PAYFLAG
+    df = calculate_unperf_pay(df)
+    
+    # Apply cutoffs if selected (only affects filtering, not recalculating flags)
+    if st.session_state.apply_cutoffs:
+        filtered_mask = pd.Series(True, index=df.index)
+        
+        # Apply porosity cutoff
+        if 'PHIT' in df.columns:
+            phit_series = df['PHIT'].copy()
+            if phit_series.max() > 1.5:
+                phit_series = phit_series / 100
+            filtered_mask &= (phit_series >= st.session_state.phit_value / 100)
+        
+        # Apply Sw cutoff
+        if 'SW' in df.columns:
+            sw_series = df['SW'].copy()
+            if sw_series.max() > 1.5:
+                sw_series = sw_series / 100
+            filtered_mask &= (sw_series <= st.session_state.sw_value / 100)
+        
+        # Apply VSH cutoff
+        if 'VSH' in df.columns:
+            vsh_series = df['VSH'].copy()
+            if vsh_series.max() > 1.5:
+                vsh_series = vsh_series / 100
+            filtered_mask &= (vsh_series <= st.session_state.vsh_value / 100)
+        
+        # Store original data but use filtered for display
+        filtered_df = df[filtered_mask].copy()
+    else:
+        filtered_df = df.copy()
 
     # Depth filter
     min_d, max_d = float(df['DEPTH'].min()), float(df['DEPTH'].max())
     depth_range = st.slider("Depth Range (m)", min_d, max_d, (min_d, max_d), 0.1, key="depth_slider")
-    df = df[(df['DEPTH'] >= depth_range[0]) & (df['DEPTH'] <= depth_range[1])].copy()
+    display_df = filtered_df[(filtered_df['DEPTH'] >= depth_range[0]) & (filtered_df['DEPTH'] <= depth_range[1])].copy()
 
     st.markdown(f'<h3 style="color: #1A3C6D;">{clean_text(selected_well)}</h3>', unsafe_allow_html=True)
     
     # Show available curves in sidebar for reference
     with st.sidebar.expander(f"Available curves in {selected_well}"):
         st.write(", ".join(df.columns.tolist()))
+        if 'RESFLAG' in df.columns:
+            resflag_stats = df['RESFLAG'].value_counts()
+            st.write(f"RESFLAG distribution: {dict(resflag_stats)}")
+        if 'PAYFLAG' in df.columns:
+            payflag_stats = df['PAYFLAG'].value_counts()
+            st.write(f"PAYFLAG distribution: {dict(payflag_stats)}")
 
     # Create tabs for Standard and Customized Visualization only
     standard_tab, custom_tab = st.tabs(["Standard Visualization", "Customized Visualization"])
@@ -579,47 +557,38 @@ if st.session_state.well_data:
 
         # Check for porosity logs
         porosity_logs = ['PHIT', 'PHIE']
-        if any(col in df.columns for col in porosity_logs) and st.session_state.show_porosity:
+        if any(col in display_df.columns for col in porosity_logs) and st.session_state.show_porosity:
             available_tracks.append('phit')
 
         # Check for saturation logs
-        if 'SW' in df.columns and st.session_state.show_saturation:
+        if 'SW' in display_df.columns and st.session_state.show_saturation:
             available_tracks.append('sw')
 
         # Check for VSH
-        if 'VSH' in df.columns:
+        if 'VSH' in display_df.columns:
             available_tracks.append('vsh')
 
-        # Check for net reservoir
-        if 'NET_RESERVOIR' in df.columns and not df['NET_RESERVOIR'].isna().all() and st.session_state.show_net_reservoir:
-            available_tracks.append('net_reservoir')
-
-        # Check for net pay
-        if 'NET_PAY' in df.columns and not df['NET_PAY'].isna().all() and st.session_state.show_net_pay:
-            available_tracks.append('net_pay')
-
-        # Check for ResFlag
-        if 'RESFLAG' in df.columns and not df['RESFLAG'].isna().all() and st.session_state.show_resflag:
+        # Check for ResFlag (from CPI)
+        if 'RESFLAG' in display_df.columns and not display_df['RESFLAG'].isna().all() and st.session_state.show_resflag:
             available_tracks.append('resflag')
 
-        # Check for PayFlag
-        if 'PAYFLAG' in df.columns and not df['PAYFLAG'].isna().all() and st.session_state.show_payflag:
+        # Check for PayFlag (from CPI)
+        if 'PAYFLAG' in display_df.columns and not display_df['PAYFLAG'].isna().all() and st.session_state.show_payflag:
             available_tracks.append('payflag')
 
         # Check for special logs
-        if 'SHPOR' in df.columns and st.session_state.show_porosity:
+        if 'SHPOR' in display_df.columns and st.session_state.show_porosity:
             available_tracks.append('shpor')
-        if 'PORNET' in df.columns and st.session_state.show_porosity:
+        if 'PORNET' in display_df.columns and st.session_state.show_porosity:
             available_tracks.append('pornet')
 
         # Check for perforations
-        if 'PERF' in df.columns and st.session_state.show_perforations:
+        if 'PERF' in display_df.columns and st.session_state.show_perforations:
             available_tracks.append('perf')
 
-        # Check for unperforated net pay
-        if 'UNPERF_NET_PAY' in df.columns and not df['UNPERF_NET_PAY'].isna().all():
+        # Check for unperforated net pay (calculated from PAYFLAG and PERF)
+        if 'UNPERF_NET_PAY' in display_df.columns and not display_df['UNPERF_NET_PAY'].isna().all():
             available_tracks.append('unperf_pay')
-
 
         # Track selection
         selected_tracks = st.multiselect(
@@ -679,192 +648,159 @@ if st.session_state.well_data:
                     ax.set_title("Porosity (%)", fontsize=10)
     
                     # Plot PHIT if available
-                    if 'PHIT' in df.columns:
-                        phit_values = df['PHIT'].copy()
+                    if 'PHIT' in display_df.columns:
+                        phit_values = display_df['PHIT'].copy()
                         # Normalize to percentage for display
-                        if phit_values.max() <= 1.0:  # Already in decimal (0-1)
+                        if phit_values.max() <= 1.0:
                             phit_values = phit_values * 100
-                        elif phit_values.max() > 1.0 and phit_values.max() <= 1.5:  # Already in fraction (0-1.5)
+                        elif phit_values.max() > 1.0 and phit_values.max() <= 1.5:
                             phit_values = phit_values * 100
-                        # Plot the curve
-                        ax.plot(phit_values, df['DEPTH'], color=colors['porosity'], label='PHIT', lw=1.5)
+                        ax.plot(phit_values, display_df['DEPTH'], color=colors['porosity'], label='PHIT', lw=1.5)
     
                     # Plot PHIE if available (as dashed line)
-                    if 'PHIE' in df.columns:
-                        phie_values = df['PHIE'].copy()
-                        # Normalize to percentage for display
+                    if 'PHIE' in display_df.columns:
+                        phie_values = display_df['PHIE'].copy()
                         if phie_values.max() <= 1.0:
                             phie_values = phie_values * 100
                         elif phie_values.max() > 1.0 and phie_values.max() <= 1.5:
                             phie_values = phie_values * 100
-                        ax.plot(phie_values, df['DEPTH'], color=colors['porosity'], ls='--', label='PHIE', lw=1)
+                        ax.plot(phie_values, display_df['DEPTH'], color=colors['porosity'], ls='--', label='PHIE', lw=1)
     
                     # Add cutoff line if applicable
                     if st.session_state.apply_cutoffs:
                         ax.axvline(st.session_state.phit_value, color='red', ls=':', lw=1, label=f'Cutoff: {st.session_state.phit_value}%')
 
-                    ax.set_xlim(0, 50)  # Porosity typically 0-50%
+                    ax.set_xlim(0, 50)
                     ax.legend(fontsize=8)
                     ax.grid(True, alpha=0.3)
 
                 elif track == 'sw':
                     ax.set_title("Water Saturation (%)", fontsize=10)
-                    if 'SW' in df.columns:
-                        sw_values = df['SW'].copy()
-                        # Normalize to percentage for display
-                        if sw_values.max() <= 1.0:  # Already in decimal (0-1)
+                    if 'SW' in display_df.columns:
+                        sw_values = display_df['SW'].copy()
+                        if sw_values.max() <= 1.0:
                             sw_values = sw_values * 100
-                        elif sw_values.max() > 1.0 and sw_values.max() <= 1.5:  # Already in fraction (0-1.5)
+                        elif sw_values.max() > 1.0 and sw_values.max() <= 1.5:
                             sw_values = sw_values * 100
         
-                        # Plot the curve
-                        ax.plot(sw_values, df['DEPTH'], color=colors['saturation'], label='Sw', lw=1.5)
+                        ax.plot(sw_values, display_df['DEPTH'], color=colors['saturation'], label='Sw', lw=1.5)
         
-                        # Add cutoff line if applicable
                         if st.session_state.apply_cutoffs:
                             ax.axvline(st.session_state.sw_value, color='red', ls=':', lw=1, label=f'Cutoff: {st.session_state.sw_value}%')
         
-                        # Set limits and legend
                         ax.set_xlim(0, 100)
                         ax.legend(fontsize=8)
                         ax.grid(True, alpha=0.3)
 
                 elif track == 'vsh':
                     ax.set_title("Clay Volume - VSH (%)", fontsize=10)
-                    if 'VSH' in df.columns:
-                        vsh_values = df['VSH'].copy()
-                        # Normalize to percentage for display
-                        if vsh_values.max() <= 1.0:  # Already in decimal (0-1)
+                    if 'VSH' in display_df.columns:
+                        vsh_values = display_df['VSH'].copy()
+                        if vsh_values.max() <= 1.0:
                             vsh_values = vsh_values * 100
-                        elif vsh_values.max() > 1.0 and vsh_values.max() <= 1.5:  # Already in fraction (0-1.5)
+                        elif vsh_values.max() > 1.0 and vsh_values.max() <= 1.5:
                             vsh_values = vsh_values * 100
                         
-                        # Plot the curve
-                        ax.plot(vsh_values, df['DEPTH'], color='#8c564b', label='VSH', lw=1.5)
+                        ax.plot(vsh_values, display_df['DEPTH'], color='#8c564b', label='VSH', lw=1.5)
         
-                        # Add cutoff line if applicable
                         if st.session_state.apply_cutoffs:
                             ax.axvline(st.session_state.vsh_value, color='red', ls=':', lw=1, label=f'Cutoff: {st.session_state.vsh_value}%')
         
-                        # Set limits and legend
                         ax.set_xlim(0, 100)
                         ax.legend(fontsize=8)
                         ax.grid(True, alpha=0.3)
 
-                elif track == 'net_reservoir':
-                    ax.set_title("Net Reservoir", fontsize=10)
-                    values = df['NET_RESERVOIR'].dropna()
-                    if not values.empty:
-                        ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
-                                         color=colors['net_reservoir'], step='pre', alpha=0.7)
-                        ax.set_xlim(0, 1)
-                        ax.set_xticks([0, 1])
-                    else:
-                        st.warning("No valid data for Net Reservoir to plot.")
-
-                elif track == 'net_pay':
-                    ax.set_title("Net Pay", fontsize=10)
-                    values = df['NET_PAY'].dropna()
-                    if not values.empty:
-                        ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
-                                         color=colors['net_pay'], step='pre', alpha=0.7)
-                        ax.set_xlim(0, 1)
-                        ax.set_xticks([0, 1])
-                    else:
-                        st.warning("No valid data for Net Pay to plot.")
-
                 elif track == 'resflag':
-                    ax.set_title("Reservoir Flag", fontsize=10)
-                    values = df['RESFLAG'].dropna()
-                    if not values.empty:
-                        # Ensure values are 0 or 1
-                        values = values.clip(0, 1).astype(int)
-                        ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
-                                         color=colors['resflag'], step='pre', alpha=0.7)
-                        ax.set_xlim(0, 1)
-                        ax.set_xticks([0, 1])
-                        # Add labels
-                        ax.text(0.5, depth_range[0] + 5, 'Reservoir Zone', 
-                                ha='center', va='bottom', fontsize=7)
-                    else:
-                        st.warning("No valid data for Reservoir Flag to plot.")
+                    ax.set_title("Reservoir Flag (from CPI)", fontsize=10)
+                    if 'RESFLAG' in display_df.columns:
+                        values = display_df['RESFLAG'].dropna()
+                        if not values.empty:
+                            values = values.clip(0, 1).astype(int)
+                            ax.fill_betweenx(display_df.loc[values.index, 'DEPTH'], 0, values,
+                                             color=colors['resflag'], step='pre', alpha=0.7)
+                            ax.set_xlim(0, 1)
+                            ax.set_xticks([0, 1])
+                            ax.text(0.5, depth_range[0] + 5, 'Reservoir Zone', 
+                                    ha='center', va='bottom', fontsize=7)
+                        else:
+                            st.warning("No RESFLAG data to plot.")
 
                 elif track == 'payflag':
-                    ax.set_title("Pay Flag", fontsize=10)
-                    values = df['PAYFLAG'].dropna()
-                    if not values.empty:
-                        # Ensure values are 0 or 1
-                        values = values.clip(0, 1).astype(int)
-                        ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
-                                         color=colors['payflag'], step='pre', alpha=0.7)
-                        ax.set_xlim(0, 1)
-                        ax.set_xticks([0, 1])
-                        # Add labels
-                        ax.text(0.5, depth_range[0] + 5, 'Pay Zone', 
-                                ha='center', va='bottom', fontsize=7)
-                    else:
-                        st.warning("No valid data for Pay Flag to plot.")
+                    ax.set_title("Pay Flag (from CPI)", fontsize=10)
+                    if 'PAYFLAG' in display_df.columns:
+                        values = display_df['PAYFLAG'].dropna()
+                        if not values.empty:
+                            values = values.clip(0, 1).astype(int)
+                            ax.fill_betweenx(display_df.loc[values.index, 'DEPTH'], 0, values,
+                                             color=colors['payflag'], step='pre', alpha=0.7)
+                            ax.set_xlim(0, 1)
+                            ax.set_xticks([0, 1])
+                            ax.text(0.5, depth_range[0] + 5, 'Pay Zone', 
+                                    ha='center', va='bottom', fontsize=7)
+                        else:
+                            st.warning("No PAYFLAG data to plot.")
 
                 elif track == 'perf':
                     ax.set_title("Perforations", fontsize=10)
-                    values = df['PERF'].dropna()
-                    if not values.empty:
-                        ax.step(values, df.loc[values.index, 'DEPTH'], where='mid', color=colors['perforation'], lw=1.5)
-                        ax.set_xlim(-1.5, 1.5)
-                        ax.text(-1, depth_range[0], 'pluged perf', ha='right', va='bottom', fontsize=8)
-                        ax.text(1, depth_range[0], 'open perf', ha='left', va='bottom', fontsize=8)
-                        ax.set_xticks([-1, 0, 1])
-                    else:
-                        st.warning("No valid data for Perforations to plot.")
+                    if 'PERF' in display_df.columns:
+                        values = display_df['PERF'].dropna()
+                        if not values.empty:
+                            ax.step(values, display_df.loc[values.index, 'DEPTH'], where='mid', 
+                                   color=colors['perforation'], lw=1.5)
+                            ax.set_xlim(-1.5, 1.5)
+                            ax.text(-1, depth_range[0], 'plugged perf', ha='right', va='bottom', fontsize=8)
+                            ax.text(1, depth_range[0], 'open perf', ha='left', va='bottom', fontsize=8)
+                            ax.set_xticks([-1, 0, 1])
+                        else:
+                            st.warning("No perforation data to plot.")
 
                 elif track == 'unperf_pay':
                     ax.set_title("Unperf Net Pay", fontsize=10)
-                    values = df['UNPERF_NET_PAY'].dropna()
-                    if not values.empty:
-                        ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
-                                         color=colors['unperf_net_pay'], step='pre', alpha=0.7)
-                        ax.set_xlim(0, 1)
-                        ax.set_xticks([0, 1])
-                    else:
-                        st.warning("No valid data for Unperforated Net Pay to plot.")
+                    if 'UNPERF_NET_PAY' in display_df.columns:
+                        values = display_df['UNPERF_NET_PAY'].dropna()
+                        if not values.empty:
+                            ax.fill_betweenx(display_df.loc[values.index, 'DEPTH'], 0, values,
+                                             color=colors['unperf_net_pay'], step='pre', alpha=0.7)
+                            ax.set_xlim(0, 1)
+                            ax.set_xticks([0, 1])
+                        else:
+                            st.warning("No unperforated net pay data to plot.")
 
                 elif track == 'shpor':
                     ax.set_title("SHPOR", fontsize=10)
-                    if 'SHPOR' in df.columns:
-                        shpor_values = df['SHPOR']
+                    if 'SHPOR' in display_df.columns:
+                        shpor_values = display_df['SHPOR']
                         if not shpor_values.isna().all():
                             mask = ~shpor_values.isna()
                             segments = np.split(np.where(mask)[0], np.where(np.diff(np.where(mask)[0]) > 1)[0] + 1)
                             for seg in segments:
                                 if len(seg) > 1:
-                                    ax.plot(shpor_values.iloc[seg], df['DEPTH'].iloc[seg], color=colors['shpor'], lw=1.5)
+                                    ax.plot(shpor_values.iloc[seg], display_df['DEPTH'].iloc[seg], 
+                                           color=colors['shpor'], lw=1.5)
                             min_val = shpor_values.min() * 0.9 if shpor_values.min() > 0 else shpor_values.min() * 1.1 if shpor_values.min() < 0 else 0
                             max_val = shpor_values.max() * 1.1 if shpor_values.max() > 0 else shpor_values.max() * 0.9 if shpor_values.max() < 0 else 1
                             ax.set_xlim(min_val, max_val)
                             ax.legend([f'SHPOR'], fontsize=8)
                         else:
-                            st.warning("No valid data for SHPOR to plot.")
-                    else:
-                        st.warning("SHPOR column not found in data.")
+                            st.warning("No SHPOR data to plot.")
 
                 elif track == 'pornet':
                     ax.set_title("PORNET", fontsize=10)
-                    if 'PORNET' in df.columns:
-                        pornet_values = df['PORNET']
+                    if 'PORNET' in display_df.columns:
+                        pornet_values = display_df['PORNET']
                         if not pornet_values.isna().all():
                             mask = ~pornet_values.isna()
                             segments = np.split(np.where(mask)[0], np.where(np.diff(np.where(mask)[0]) > 1)[0] + 1)
                             for seg in segments:
                                 if len(seg) > 1:
-                                    ax.plot(pornet_values.iloc[seg], df['DEPTH'].iloc[seg], color=colors['pornet'], lw=1.5)
+                                    ax.plot(pornet_values.iloc[seg], display_df['DEPTH'].iloc[seg], 
+                                           color=colors['pornet'], lw=1.5)
                             min_val = pornet_values.min() * 0.9 if pornet_values.min() > 0 else pornet_values.min() * 1.1 if pornet_values.min() < 0 else 0
                             max_val = pornet_values.max() * 1.1 if pornet_values.max() > 0 else pornet_values.max() * 0.9 if pornet_values.max() < 0 else 1
                             ax.set_xlim(min_val, max_val)
                             ax.legend([f'PORNET'], fontsize=8)
                         else:
-                            st.warning("No valid data for PORNET to plot.")
-                    else:
-                        st.warning("PORNET column not found in data.")
+                            st.warning("No PORNET data to plot.")
 
             plt.tight_layout(pad=2.0, h_pad=1.0)
             st.pyplot(fig, use_container_width=True)
@@ -875,34 +811,43 @@ if st.session_state.well_data:
         with tab1:
             st.subheader("Well Log Summary")
             # Select important columns to display
-            important_cols = ['DEPTH', 'PHIT', 'SW', 'VSH', 'NET_RESERVOIR', 'NET_PAY', 
-                             'RESFLAG', 'PAYFLAG', 'PERF']
-            available_cols = [col for col in important_cols if col in df.columns and not df[col].isna().all()]
+            important_cols = ['DEPTH', 'PHIT', 'SW', 'VSH', 'RESFLAG', 'PAYFLAG', 'PERF', 'UNPERF_NET_PAY']
+            available_cols = [col for col in important_cols if col in display_df.columns and not display_df[col].isna().all()]
             
             # Add mineral volumes if available
             mineral_cols = ['VSAND', 'VSILT', 'VGLAU', 'VILITE', 'VLIME', 'VOIL', 'VWATER']
-            available_minerals = [col for col in mineral_cols if col in df.columns and not df[col].isna().all()]
+            available_minerals = [col for col in mineral_cols if col in display_df.columns and not display_df[col].isna().all()]
             
             summary_cols = available_cols + available_minerals
-            summary_df = df[summary_cols].round(3)
+            summary_df = display_df[summary_cols].round(3)
             st.dataframe(summary_df, use_container_width=True)
             
-            # Show summary statistics
+            # Show summary statistics using CPI flags
             st.subheader("Summary Statistics")
-            if 'NET_RESERVOIR' in df.columns:
-                net_res_thickness = df[df['NET_RESERVOIR'] == 1]['DEPTH'].diff().sum()
-                st.write(f"Net Reservoir Thickness: **{net_res_thickness:.2f} m**")
-            if 'NET_PAY' in df.columns:
-                net_pay_thickness = df[df['NET_PAY'] == 1]['DEPTH'].diff().sum()
-                st.write(f"Net Pay Thickness: **{net_pay_thickness:.2f} m**")
-                unperf_thickness = df[df['UNPERF_NET_PAY'] == 1]['DEPTH'].diff().sum()
-                st.write(f"Unperforated Net Pay Thickness: **{unperf_thickness:.2f} m**")
-            if 'RESFLAG' in df.columns:
-                resflag_thickness = df[df['RESFLAG'] == 1]['DEPTH'].diff().sum()
+            
+            # Calculate thicknesses using depth differences
+            depth_diff = display_df['DEPTH'].diff().fillna(0)
+            
+            if 'RESFLAG' in display_df.columns:
+                resflag_thickness = depth_diff[display_df['RESFLAG'] == 1].sum()
                 st.write(f"Reservoir Flag Thickness: **{resflag_thickness:.2f} m**")
-            if 'PAYFLAG' in df.columns:
-                payflag_thickness = df[df['PAYFLAG'] == 1]['DEPTH'].diff().sum()
+            
+            if 'PAYFLAG' in display_df.columns:
+                payflag_thickness = depth_diff[display_df['PAYFLAG'] == 1].sum()
                 st.write(f"Pay Flag Thickness: **{payflag_thickness:.2f} m**")
+            
+            if 'UNPERF_NET_PAY' in display_df.columns:
+                unperf_thickness = depth_diff[display_df['UNPERF_NET_PAY'] == 1].sum()
+                st.write(f"Unperforated Net Pay Thickness: **{unperf_thickness:.2f} m**")
+            
+            # Show flag statistics
+            if 'RESFLAG' in display_df.columns:
+                resflag_counts = display_df['RESFLAG'].value_counts().to_dict()
+                st.write(f"Reservoir Flag counts: {resflag_counts}")
+            
+            if 'PAYFLAG' in display_df.columns:
+                payflag_counts = display_df['PAYFLAG'].value_counts().to_dict()
+                st.write(f"Pay Flag counts: {payflag_counts}")
 
         with tab2:
             st.subheader("Unperforated Net Pay Intervals")
@@ -912,51 +857,52 @@ if st.session_state.well_data:
             
             with well_tab:
                 st.write(f"**Unperforated Net Pay Intervals for {selected_well}**")
-                unperf_df = df[df['UNPERF_NET_PAY'] == 1].copy() if 'UNPERF_NET_PAY' in df.columns else pd.DataFrame()
+                
+                # Get unperforated intervals for selected well
+                if 'UNPERF_NET_PAY' in display_df.columns:
+                    unperf_df = display_df[display_df['UNPERF_NET_PAY'] == 1].copy()
+                else:
+                    unperf_df = pd.DataFrame()
                 
                 if unperf_df.empty:
                     st.success(f"No unperforated net pay found in {selected_well}! 🎉")
                 else:
-                    # Sort by depth
+                    # Sort by depth and create continuous intervals
                     unperf_df = unperf_df.sort_values('DEPTH')
                     
                     # Create groups for continuous intervals
                     unperf_df['GROUP'] = 0
                     group_num = 0
                     
-                    # Start the first group
-                    unperf_df.iloc[0, unperf_df.columns.get_loc('GROUP')] = group_num
-                    
-                    # Group consecutive depths (within 0.6 m to account for typical log spacing)
-                    for i in range(1, len(unperf_df)):
-                        current_depth = unperf_df.iloc[i]['DEPTH']
-                        prev_depth = unperf_df.iloc[i-1]['DEPTH']
+                    if len(unperf_df) > 0:
+                        unperf_df.iloc[0, unperf_df.columns.get_loc('GROUP')] = group_num
                         
-                        # If depths are not consecutive (more than 0.6 m apart), start new group
-                        if current_depth - prev_depth > 0.6:
-                            group_num += 1
-                        
-                        unperf_df.iloc[i, unperf_df.columns.get_loc('GROUP')] = group_num
+                        for i in range(1, len(unperf_df)):
+                            current_depth = unperf_df.iloc[i]['DEPTH']
+                            prev_depth = unperf_df.iloc[i-1]['DEPTH']
+                            
+                            if current_depth - prev_depth > 0.6:
+                                group_num += 1
+                            
+                            unperf_df.iloc[i, unperf_df.columns.get_loc('GROUP')] = group_num
                     
-                    # Now group by the GROUP column
+                    # Group by the GROUP column
                     grouped = unperf_df.groupby('GROUP').agg(
                         Top=('DEPTH', 'min'),
                         Base=('DEPTH', 'max'),
                         Avg_Porosity=('PHIT', 'mean') if 'PHIT' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
                         Avg_Sw=('SW', 'mean') if 'SW' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
                         Avg_VSH=('VSH', 'mean') if 'VSH' in unperf_df.columns else ('DEPTH', lambda x: np.nan),
-                        Data_Points=('DEPTH', 'count')  # Number of data points in the interval
+                        Data_Points=('DEPTH', 'count')
                     ).reset_index(drop=True)
                     
-                    # Calculate thickness: Base - Top
+                    # Calculate thickness
                     grouped['Thickness (m)'] = (grouped['Base'] - grouped['Top']).round(2)
                     
-                    # If we have only one data point in the interval, estimate thickness
+                    # Estimate thickness for single-point intervals
                     for idx, row in grouped.iterrows():
                         if row['Data_Points'] == 1:
-                            # Estimate thickness as typical log spacing
                             grouped.at[idx, 'Thickness (m)'] = 0.1524
-                            # Adjust Base to be Top + estimated thickness
                             grouped.at[idx, 'Base'] = row['Top'] + 0.1524
                     
                     # Apply AIT cutoff if enabled
@@ -977,14 +923,14 @@ if st.session_state.well_data:
                                     grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
                         
                         display_cols = ['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH']
-                        display_df = grouped[display_cols].copy()
+                        display_df_result = grouped[display_cols].copy()
                         
                         # Convert to percentages for display
                         for col in ['Avg_Porosity', 'Avg_Sw', 'Avg_VSH']:
-                            if col in display_df.columns:
-                                display_df[col] = display_df[col].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
+                            if col in display_df_result.columns:
+                                display_df_result[col] = display_df_result[col].apply(lambda x: round(x * 100, 2) if pd.notna(x) else np.nan)
                         
-                        st.dataframe(display_df, use_container_width=True)
+                        st.dataframe(display_df_result, use_container_width=True)
                         
                         # Summary statistics
                         st.subheader("Summary Statistics")
@@ -1000,7 +946,7 @@ if st.session_state.well_data:
                             st.metric("Average Interval Thickness", f"{avg_thickness:.2f} m")
                         
                         # Download button for selected well
-                        csv = display_df.to_csv(index=False).encode('utf-8')
+                        csv = display_df_result.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             f"Download {selected_well} Unperforated Intervals",
                             csv,
@@ -1086,10 +1032,10 @@ if st.session_state.well_data:
             'track2': {'label': 'Track 2', 'default': 'PHIT'},
             'track3': {'label': 'Track 3', 'default': 'SW'},
             'track4': {'label': 'Track 4', 'default': 'VSH'},
-            'track5': {'label': 'Track 5', 'default': 'NET_RESERVOIR'},
-            'track6': {'label': 'Track 6', 'default': 'NET_PAY'},
-            'track7': {'label': 'Track 7', 'default': 'RESFLAG'},
-            'track8': {'label': 'Track 8', 'default': 'PAYFLAG'}
+            'track5': {'label': 'Track 5', 'default': 'RESFLAG'},
+            'track6': {'label': 'Track 6', 'default': 'PAYFLAG'},
+            'track7': {'label': 'Track 7', 'default': 'PERF'},
+            'track8': {'label': 'Track 8', 'default': 'UNPERF_NET_PAY'}
         }
         
         # Initialize session state
@@ -1144,16 +1090,16 @@ if st.session_state.well_data:
                 
                 ax.set_title(f"{curve_name}", fontsize=10)
                 
-                if curve_name in df.columns:
-                    values = df[curve_name].copy()
+                if curve_name in display_df.columns:
+                    values = display_df[curve_name].copy()
                     
                     # Determine plot type based on curve name
-                    if curve_name in ['NET_RESERVOIR', 'NET_PAY', 'PERF', 'UNPERF_NET_PAY', 'RESFLAG', 'PAYFLAG']:
-                        # Binary track
+                    if curve_name in ['RESFLAG', 'PAYFLAG', 'PERF', 'UNPERF_NET_PAY']:
+                        # Binary or categorical track
                         values = values.dropna()
                         if not values.empty:
                             if curve_name == 'PERF':
-                                ax.step(values, df.loc[values.index, 'DEPTH'], where='mid', 
+                                ax.step(values, display_df.loc[values.index, 'DEPTH'], where='mid', 
                                        color=colors.get('perforation', '#2ca02c'), lw=1.5)
                                 ax.set_xlim(-1.5, 1.5)
                                 ax.set_xticks([-1, 0, 1])
@@ -1161,7 +1107,7 @@ if st.session_state.well_data:
                                 # Get color for the specific track
                                 color_key = curve_name.lower().replace('_', '')
                                 color = colors.get(color_key, '#1f77b4')
-                                ax.fill_betweenx(df.loc[values.index, 'DEPTH'], 0, values,
+                                ax.fill_betweenx(display_df.loc[values.index, 'DEPTH'], 0, values.clip(0, 1),
                                                  step='pre', alpha=0.7,
                                                  color=color)
                                 ax.set_xlim(0, 1)
@@ -1176,7 +1122,7 @@ if st.session_state.well_data:
                             # Get color for the curve
                             color_key = curve_name.lower().replace('_', '')
                             color = colors.get(color_key, '#1f77b4')
-                            ax.plot(values, df['DEPTH'], lw=1.5, color=color)
+                            ax.plot(values, display_df['DEPTH'], lw=1.5, color=color)
                             
                             # Add cutoff lines if applicable
                             if curve_name == 'PHIT' and st.session_state.apply_cutoffs:
