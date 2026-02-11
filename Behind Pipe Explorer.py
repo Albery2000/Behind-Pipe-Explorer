@@ -440,14 +440,20 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         
         grouped['Well'] = well_name
         
-        # Determine zone from tops
+        # Determine zone from tops - FIXED: Check if tops exists and has required columns
         grouped['Zone'] = 'Unknown'
         if 'tops' in well:
-            tops = well['tops'].sort_values('DEPTH')
-            for i, row in grouped.iterrows():
-                valid_tops = tops[tops['DEPTH'] <= row['Top']]
-                if not valid_tops.empty:
-                    grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
+            tops = well['tops']
+            # Check if tops dataframe is not empty and has the required columns
+            if not tops.empty and 'DEPTH' in tops.columns and 'TOP' in tops.columns:
+                try:
+                    tops = tops.sort_values('DEPTH')
+                    for i, row in grouped.iterrows():
+                        valid_tops = tops[tops['DEPTH'] <= row['Top']]
+                        if not valid_tops.empty:
+                            grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
+                except Exception as e:
+                    st.warning(f"Error processing tops for {well_name}: {str(e)}")
         
         # Prepare final columns
         final_columns = ['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH']
@@ -561,7 +567,9 @@ if st.session_state.well_data:
 
         # Check which tracks have data
         if 'tops' in well and st.session_state.show_colored_tops_track:
-            available_tracks.append('tops')
+            # Only add tops track if tops data is not empty
+            if not well['tops'].empty:
+                available_tracks.append('tops')
 
         # Check for porosity logs
         porosity_logs = ['PHIT', 'PHIE']
@@ -640,17 +648,18 @@ if st.session_state.well_data:
                     if 'tops' in well:
                         tops = well['tops'][(well['tops']['DEPTH'] >= depth_range[0]) &
                                             (well['tops']['DEPTH'] <= depth_range[1])].sort_values('DEPTH')
-                        top_colors = sns.color_palette("Pastel1", len(tops))
-                        for j in range(len(tops) - 1):
-                            top1, top2 = tops.iloc[j], tops.iloc[j + 1]
-                            ax.axhline(top1['DEPTH'], color='black', ls='--', lw=0.8)
-                            ax.fill_betweenx([top1['DEPTH'], top2['DEPTH']], 0, 1,
-                                             color=top_colors[j], alpha=0.5)
-                            ax.text(0.5, (top1['DEPTH'] + top2['DEPTH']) / 2, clean_text(top1['TOP']),
-                                    ha='center', va='center', fontsize=8, bbox=dict(facecolor='white', alpha=0.8),
-                                    transform=ax.get_yaxis_transform())
-                        if len(tops) > 0:
-                            ax.axhline(tops.iloc[-1]['DEPTH'], color='black', ls='--', lw=0.8)
+                        if not tops.empty:
+                            top_colors = sns.color_palette("Pastel1", len(tops))
+                            for j in range(len(tops) - 1):
+                                top1, top2 = tops.iloc[j], tops.iloc[j + 1]
+                                ax.axhline(top1['DEPTH'], color='black', ls='--', lw=0.8)
+                                ax.fill_betweenx([top1['DEPTH'], top2['DEPTH']], 0, 1,
+                                                 color=top_colors[j], alpha=0.5)
+                                ax.text(0.5, (top1['DEPTH'] + top2['DEPTH']) / 2, clean_text(top1['TOP']),
+                                        ha='center', va='center', fontsize=8, bbox=dict(facecolor='white', alpha=0.8),
+                                        transform=ax.get_yaxis_transform())
+                            if len(tops) > 0:
+                                ax.axhline(tops.iloc[-1]['DEPTH'], color='black', ls='--', lw=0.8)
                             
                 elif track == 'phit':
                     ax.set_title("Porosity (%)", fontsize=10)
@@ -924,11 +933,13 @@ if st.session_state.well_data:
                         
                         grouped['Zone'] = 'Unknown'
                         if 'tops' in well:
-                            tops = well['tops'].sort_values('DEPTH')
-                            for i, row in grouped.iterrows():
-                                valid_tops = tops[tops['DEPTH'] <= row['Top']]
-                                if not valid_tops.empty:
-                                    grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
+                            tops = well['tops']
+                            if not tops.empty and 'DEPTH' in tops.columns and 'TOP' in tops.columns:
+                                tops = tops.sort_values('DEPTH')
+                                for i, row in grouped.iterrows():
+                                    valid_tops = tops[tops['DEPTH'] <= row['Top']]
+                                    if not valid_tops.empty:
+                                        grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
                         
                         display_cols = ['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH']
                         display_df_result = grouped[display_cols].copy()
@@ -1062,7 +1073,7 @@ if st.session_state.well_data:
                 selected_curve = st.selectbox(
                     config['label'],
                     options=available_curves,
-                    index=available_curves.index(st.session_state[f"custom_curve_{track}"]),
+                    index=available_curves.index(st.session_state[f"custom_curve_{track}"]) if st.session_state[f"custom_curve_{track}"] in available_curves else 0,
                     key=f"custom_select_{track}"
                 )
                 selected_curves[track] = selected_curve
