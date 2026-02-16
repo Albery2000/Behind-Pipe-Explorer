@@ -320,6 +320,30 @@ def process_perforations(perf_file) -> None:
     except Exception as e:
         st.error(f"Failed to read perforation file: {str(e)}")
 
+# Function to assign formation based on depth and tops
+def assign_formation(depth, tops_df):
+    """Assign formation name based on depth and tops data"""
+    if tops_df is None or tops_df.empty:
+        return 'Unknown'
+    
+    # Sort tops by depth
+    tops_sorted = tops_df.sort_values('DEPTH')
+    
+    # Find the formation for this depth
+    formation = 'Unknown'
+    for i in range(len(tops_sorted) - 1):
+        if depth >= tops_sorted.iloc[i]['DEPTH'] and depth < tops_sorted.iloc[i + 1]['DEPTH']:
+            formation = tops_sorted.iloc[i]['TOP']
+            break
+    else:
+        # If depth is below the last top or above the first top
+        if depth >= tops_sorted.iloc[-1]['DEPTH']:
+            formation = tops_sorted.iloc[-1]['TOP'] + " (Base)"
+        elif depth < tops_sorted.iloc[0]['DEPTH']:
+            formation = "Above " + tops_sorted.iloc[0]['TOP']
+    
+    return formation
+
 # Function to get unperforated net pay intervals for all wells using PAYFLAG
 def get_all_wells_unperf_intervals() -> pd.DataFrame:
     all_intervals = []
@@ -440,18 +464,17 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         
         grouped['Well'] = well_name
         
-        # Determine zone from tops - FIXED: Check if tops exists and has required columns
+        # Determine zone from tops - using the improved assign_formation function
         grouped['Zone'] = 'Unknown'
         if 'tops' in well:
             tops = well['tops']
-            # Check if tops dataframe is not empty and has the required columns
             if not tops.empty and 'DEPTH' in tops.columns and 'TOP' in tops.columns:
                 try:
                     tops = tops.sort_values('DEPTH')
                     for i, row in grouped.iterrows():
-                        valid_tops = tops[tops['DEPTH'] <= row['Top']]
-                        if not valid_tops.empty:
-                            grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
+                        # For each interval, assign the formation based on the midpoint depth
+                        mid_depth = (row['Top'] + row['Base']) / 2
+                        grouped.at[i, 'Zone'] = assign_formation(mid_depth, tops)
                 except Exception as e:
                     st.warning(f"Error processing tops for {well_name}: {str(e)}")
         
@@ -472,6 +495,54 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
         result = pd.DataFrame(columns=['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH'])
     
     return result
+
+# Function to create formation breakdown table similar to the image
+def create_formation_breakdown(all_intervals_df):
+    """Create a formation breakdown table similar to the image provided"""
+    if all_intervals_df.empty:
+        return pd.DataFrame()
+    
+    # Pivot the data to create a matrix of Well x Formation with Thickness
+    formation_breakdown = all_intervals_df.pivot_table(
+        index='Well', 
+        columns='Zone', 
+        values='Thickness (m)',
+        aggfunc='sum',
+        fill_value=0
+    ).round(2)
+    
+    # Add a Total column
+    formation_breakdown['Total'] = formation_breakdown.sum(axis=1).round(2)
+    
+    # Sort wells by total thickness
+    formation_breakdown = formation_breakdown.sort_values('Total', ascending=False)
+    
+    # Reset index to make Well a column
+    formation_breakdown = formation_breakdown.reset_index()
+    
+    return formation_breakdown
+
+# Function to create a styled formation breakdown table
+def style_formation_table(df):
+    """Apply styling to the formation breakdown table"""
+    if df.empty:
+        return df
+    
+    # Create a copy for styling
+    styled_df = df.copy()
+    
+    # Add color coding based on thickness values
+    def color_thickness(val):
+        if pd.isna(val) or val == 0:
+            return 'background-color: #f0f0f0'
+        elif val >= 5:
+            return 'background-color: #90EE90'  # Light green for thick
+        elif val >= 2:
+            return 'background-color: #FFD700'  # Gold for medium
+        else:
+            return 'background-color: #FFB6C1'  # Light pink for thin
+    
+    return styled_df
 
 # Process uploaded files
 if uploaded_files:
@@ -937,9 +1008,8 @@ if st.session_state.well_data:
                             if not tops.empty and 'DEPTH' in tops.columns and 'TOP' in tops.columns:
                                 tops = tops.sort_values('DEPTH')
                                 for i, row in grouped.iterrows():
-                                    valid_tops = tops[tops['DEPTH'] <= row['Top']]
-                                    if not valid_tops.empty:
-                                        grouped.at[i, 'Zone'] = clean_text(valid_tops.iloc[-1]['TOP'])
+                                    mid_depth = (row['Top'] + row['Base']) / 2
+                                    grouped.at[i, 'Zone'] = assign_formation(mid_depth, tops)
                         
                         display_cols = ['Well', 'Zone', 'Top', 'Base', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw', 'Avg_VSH']
                         display_df_result = grouped[display_cols].copy()
@@ -983,7 +1053,8 @@ if st.session_state.well_data:
                 if all_intervals_df.empty:
                     st.info("No unperforated net pay intervals found across all wells.")
                 else:
-                    # Display the dataframe
+                    # Display the detailed intervals dataframe
+                    st.subheader("Detailed Intervals by Well and Formation")
                     st.dataframe(all_intervals_df, use_container_width=True)
                     
                     # Summary statistics for all wells
@@ -1006,86 +1077,102 @@ if st.session_state.well_data:
                         num_wells = all_intervals_df['Well'].nunique()
                         st.metric("Wells with Unperf Pay", num_wells)
                     
-                    # Simplified visualization matching the provided image style
-                    st.subheader("Unperforated Net Pay Intervals Summary")
+                    # Create formation breakdown table similar to the image
+                    st.subheader("Formation Breakdown by Well")
+                    st.markdown("Thickness (m) of unperforated net pay by formation for each well")
                     
-                    # Create a simplified summary table similar to the image
-                    summary_table = all_intervals_df[['Well', 'Zone', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw']].copy()
-                    summary_table.columns = ['Well', 'Formation', 'Thick (m)', 'Porosity %', 'Sw %']
+                    formation_breakdown = create_formation_breakdown(all_intervals_df)
                     
-                    # Add a color-coded thickness indicator
-                    def get_thickness_indicator(thickness):
-                        if thickness >= 5:
-                            return "🟢"  # Green circle for thick
-                        elif thickness >= 2:
-                            return "🟡"  # Yellow circle for medium
-                        else:
-                            return "🔴"  # Red circle for thin
+                    if not formation_breakdown.empty:
+                        # Display the formation breakdown table
+                        st.dataframe(formation_breakdown, use_container_width=True)
+                        
+                        # Create a heatmap-style visualization of the formation breakdown
+                        st.subheader("Formation Thickness Heatmap")
+                        
+                        # Prepare data for heatmap (excluding 'Well' and 'Total' columns)
+                        heatmap_data = formation_breakdown.set_index('Well')
+                        total_col = heatmap_data.pop('Total') if 'Total' in heatmap_data.columns else None
+                        
+                        if not heatmap_data.empty and heatmap_data.shape[1] > 0:
+                            fig, ax = plt.subplots(figsize=(12, max(4, len(heatmap_data) * 0.5)))
+                            
+                            # Create heatmap
+                            im = ax.imshow(heatmap_data.values, cmap='YlOrRd', aspect='auto', vmin=0)
+                            
+                            # Set ticks and labels
+                            ax.set_xticks(np.arange(len(heatmap_data.columns)))
+                            ax.set_yticks(np.arange(len(heatmap_data.index)))
+                            ax.set_xticklabels(heatmap_data.columns, rotation=45, ha='right', fontsize=9)
+                            ax.set_yticklabels(heatmap_data.index, fontsize=9)
+                            
+                            # Add colorbar
+                            plt.colorbar(im, ax=ax, label='Thickness (m)')
+                            
+                            # Add text annotations
+                            for i in range(len(heatmap_data.index)):
+                                for j in range(len(heatmap_data.columns)):
+                                    value = heatmap_data.iloc[i, j]
+                                    if value > 0:
+                                        text_color = 'white' if value > heatmap_data.values.max() * 0.6 else 'black'
+                                        ax.text(j, i, f'{value:.1f}', 
+                                               ha='center', va='center', 
+                                               color=text_color, fontsize=8, fontweight='bold')
+                            
+                            ax.set_title('Unperforated Net Pay Thickness by Well and Formation', fontsize=12, fontweight='bold')
+                            plt.tight_layout()
+                            st.pyplot(fig, use_container_width=True)
+                        
+                        # Add total thickness back for display
+                        if total_col is not None:
+                            formation_breakdown['Total'] = total_col
                     
-                    summary_table['Quality'] = summary_table['Thick (m)'].apply(get_thickness_indicator)
-                    
-                    # Reorder columns to put Quality first
-                    cols = summary_table.columns.tolist()
-                    cols = ['Quality'] + [c for c in cols if c != 'Quality']
-                    summary_table = summary_table[cols]
-                    
-                    # Display the simplified table
-                    st.dataframe(summary_table, use_container_width=True)
-                    
-                    # Simple bar chart of thickness by well (like a quick reference)
-                    st.subheader("Quick Thickness Reference")
-                    
-                    # Create a simple horizontal bar chart
-                    fig, ax = plt.subplots(figsize=(10, max(4, len(all_intervals_df['Well'].unique()) * 0.5)))
+                    # Simple bar chart of total thickness by well
+                    st.subheader("Total Unperforated Net Pay by Well")
                     
                     # Group by well and sum thickness
-                    well_thickness = all_intervals_df.groupby('Well')['Thickness (m)'].sum().sort_values()
+                    well_totals = all_intervals_df.groupby('Well')['Thickness (m)'].sum().sort_values()
                     
-                    # Create horizontal bars
-                    y_pos = np.arange(len(well_thickness))
-                    ax.barh(y_pos, well_thickness.values, color='#3498db', alpha=0.7)
-                    ax.set_yticks(y_pos)
-                    ax.set_yticklabels(well_thickness.index)
-                    ax.set_xlabel('Total Thickness (m)')
-                    ax.set_title('Total Unperforated Net Pay by Well')
+                    # Create horizontal bar chart
+                    fig2, ax2 = plt.subplots(figsize=(10, max(4, len(well_totals) * 0.5)))
+                    y_pos = np.arange(len(well_totals))
+                    bars = ax2.barh(y_pos, well_totals.values, color='#3498db', alpha=0.7)
+                    ax2.set_yticks(y_pos)
+                    ax2.set_yticklabels(well_totals.index)
+                    ax2.set_xlabel('Total Thickness (m)')
+                    ax2.set_title('Total Unperforated Net Pay by Well')
                     
                     # Add value labels
-                    for i, v in enumerate(well_thickness.values):
-                        ax.text(v + 0.1, i, f'{v:.1f}m', va='center')
+                    for i, (bar, val) in enumerate(zip(bars, well_totals.values)):
+                        ax2.text(val + 0.1, i, f'{val:.1f}m', va='center')
                     
                     plt.tight_layout()
-                    st.pyplot(fig, use_container_width=True)
+                    st.pyplot(fig2, use_container_width=True)
                     
-                    # Breakdown by well (simplified)
-                    st.subheader("Well Summary")
-                    well_summary = all_intervals_df.groupby('Well').agg(
-                        Intervals=('Thickness (m)', 'count'),
-                        Total_Thickness=('Thickness (m)', 'sum'),
-                        Avg_Porosity=('Avg_Porosity', 'mean'),
-                        Avg_Sw=('Avg_Sw', 'mean')
-                    ).round(2).reset_index()
+                    # Formation summary (total by formation across all wells)
+                    st.subheader("Total Thickness by Formation (All Wells)")
+                    formation_totals = all_intervals_df.groupby('Zone')['Thickness (m)'].sum().sort_values(ascending=False)
                     
-                    # Add quality indicator based on total thickness
-                    def get_well_quality(thickness):
-                        if thickness >= 10:
-                            return "🟢 Excellent"
-                        elif thickness >= 5:
-                            return "🟡 Good"
-                        elif thickness >= 2:
-                            return "🟠 Fair"
-                        else:
-                            return "🔴 Poor"
+                    fig3, ax3 = plt.subplots(figsize=(10, max(4, len(formation_totals) * 0.5)))
+                    bars3 = ax3.barh(np.arange(len(formation_totals)), formation_totals.values, color='#e67e22', alpha=0.7)
+                    ax3.set_yticks(np.arange(len(formation_totals)))
+                    ax3.set_yticklabels(formation_totals.index)
+                    ax3.set_xlabel('Total Thickness (m)')
+                    ax3.set_title('Total Unperforated Net Pay by Formation')
                     
-                    well_summary['Potential'] = well_summary['Total_Thickness'].apply(get_well_quality)
+                    # Add value labels
+                    for i, (bar, val) in enumerate(zip(bars3, formation_totals.values)):
+                        ax3.text(val + 0.1, i, f'{val:.1f}m', va='center')
                     
-                    st.dataframe(well_summary, use_container_width=True)
+                    plt.tight_layout()
+                    st.pyplot(fig3, use_container_width=True)
                     
                     # Download buttons
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
                     with col1:
                         csv_all = all_intervals_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
-                            "Download ALL Wells Unperforated Intervals",
+                            "Download Detailed Intervals",
                             csv_all,
                             "all_wells_unperforated_net_pay.csv",
                             "text/csv",
@@ -1093,11 +1180,30 @@ if st.session_state.well_data:
                         )
                     
                     with col2:
+                        if not formation_breakdown.empty:
+                            csv_formation = formation_breakdown.to_csv(index=False).encode('utf-8')
+                            st.download_button(
+                                "Download Formation Breakdown",
+                                csv_formation,
+                                "formation_breakdown.csv",
+                                "text/csv",
+                                key="download_formation_breakdown"
+                            )
+                    
+                    with col3:
+                        # Well summary
+                        well_summary = all_intervals_df.groupby('Well').agg(
+                            Intervals=('Thickness (m)', 'count'),
+                            Total_Thickness=('Thickness (m)', 'sum'),
+                            Avg_Porosity=('Avg_Porosity', 'mean'),
+                            Avg_Sw=('Avg_Sw', 'mean')
+                        ).round(2).reset_index()
+                        
                         csv_summary = well_summary.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             "Download Well Summary",
                             csv_summary,
-                            "unperf_pay_well_summary.csv",
+                            "well_summary.csv",
                             "text/csv",
                             key="download_well_summary"
                         )
