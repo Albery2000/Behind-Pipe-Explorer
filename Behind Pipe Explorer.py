@@ -8,6 +8,7 @@ import sys
 import re
 from pathlib import Path
 import seaborn as sns
+from matplotlib.patches import Patch
 
 
 # Set page config
@@ -1006,6 +1007,135 @@ if st.session_state.well_data:
                         num_wells = all_intervals_df['Well'].nunique()
                         st.metric("Wells with Unperf Pay", num_wells)
                     
+                    # Visualization of Unperforated Net Pay Intervals
+                    st.subheader("Visualization of Unperforated Net Pay Intervals")
+                    
+                    # Create a visualization showing intervals by well
+                    fig, ax = plt.subplots(figsize=(12, max(6, len(all_intervals_df) * 0.3)))
+                    
+                    # Get unique wells for y-axis
+                    wells = all_intervals_df['Well'].unique()
+                    well_to_y = {well: i for i, well in enumerate(wells)}
+                    
+                    # Plot each interval as a horizontal bar
+                    for idx, row in all_intervals_df.iterrows():
+                        y_pos = well_to_y[row['Well']]
+                        thickness = row['Thickness (m)']
+                        
+                        # Color based on thickness
+                        if thickness >= 5:
+                            color = '#2ecc71'  # Green for thick intervals
+                        elif thickness >= 2:
+                            color = '#f1c40f'  # Yellow for medium intervals
+                        else:
+                            color = '#e74c3c'  # Red for thin intervals
+                        
+                        # Add the bar
+                        ax.barh(y_pos, thickness, left=0, height=0.6, 
+                               color=color, alpha=0.7, edgecolor='black', linewidth=0.5)
+                        
+                        # Add interval details as text
+                        zone_text = f"{row['Zone']} ({row['Top']:.1f}-{row['Base']:.1f}m)"
+                        ax.text(thickness + 0.1, y_pos, zone_text, 
+                               va='center', fontsize=8, ha='left')
+                        
+                        # Add thickness value
+                        ax.text(thickness/2, y_pos, f"{thickness:.1f}m", 
+                               va='center', ha='center', fontsize=7, 
+                               color='black', fontweight='bold')
+                    
+                    # Customize the plot
+                    ax.set_yticks(list(range(len(wells))))
+                    ax.set_yticklabels(wells)
+                    ax.set_xlabel('Thickness (m)', fontsize=10, fontweight='bold')
+                    ax.set_title('Unperforated Net Pay Intervals by Well', fontsize=12, fontweight='bold')
+                    
+                    # Add grid
+                    ax.grid(True, alpha=0.3, axis='x')
+                    
+                    # Set x-axis limits with some padding
+                    max_thickness = all_intervals_df['Thickness (m)'].max()
+                    ax.set_xlim(0, max_thickness * 1.4)
+                    
+                    # Add legend for thickness categories
+                    legend_elements = [
+                        Patch(facecolor='#2ecc71', alpha=0.7, label='Thick (≥5m)'),
+                        Patch(facecolor='#f1c40f', alpha=0.7, label='Medium (2-5m)'),
+                        Patch(facecolor='#e74c3c', alpha=0.7, label='Thin (<2m)')
+                    ]
+                    ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig, use_container_width=True)
+                    
+                    # Alternative visualization: Bar chart by well with thickness distribution
+                    st.subheader("Thickness Distribution by Well")
+                    
+                    # Create a bar chart showing total thickness per well
+                    well_summary = all_intervals_df.groupby('Well').agg(
+                        Total_Thickness=('Thickness (m)', 'sum'),
+                        Num_Intervals=('Thickness (m)', 'count')
+                    ).reset_index()
+                    
+                    fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+                    
+                    # Bar chart - Total Thickness by Well
+                    bars1 = ax1.bar(well_summary['Well'], well_summary['Total_Thickness'], 
+                                   color='#3498db', alpha=0.7, edgecolor='black')
+                    ax1.set_xlabel('Well', fontsize=10)
+                    ax1.set_ylabel('Total Thickness (m)', fontsize=10)
+                    ax1.set_title('Total Unperforated Net Pay by Well', fontsize=11, fontweight='bold')
+                    ax1.tick_params(axis='x', rotation=45)
+                    
+                    # Add value labels on bars
+                    for bar in bars1:
+                        height = bar.get_height()
+                        ax1.text(bar.get_x() + bar.get_width()/2., height,
+                                f'{height:.1f}m', ha='center', va='bottom', fontsize=8)
+                    
+                    # Bar chart - Number of Intervals by Well
+                    bars2 = ax2.bar(well_summary['Well'], well_summary['Num_Intervals'], 
+                                   color='#e67e22', alpha=0.7, edgecolor='black')
+                    ax2.set_xlabel('Well', fontsize=10)
+                    ax2.set_ylabel('Number of Intervals', fontsize=10)
+                    ax2.set_title('Number of Unperforated Intervals by Well', fontsize=11, fontweight='bold')
+                    ax2.tick_params(axis='x', rotation=45)
+                    
+                    # Add value labels on bars
+                    for bar in bars2:
+                        height = bar.get_height()
+                        ax2.text(bar.get_x() + bar.get_width()/2., height,
+                                f'{int(height)}', ha='center', va='bottom', fontsize=8)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig2, use_container_width=True)
+                    
+                    # Thickness histogram
+                    st.subheader("Thickness Distribution Histogram")
+                    fig3, ax3 = plt.subplots(figsize=(10, 5))
+                    
+                    # Create histogram of interval thicknesses
+                    bins = np.arange(0, all_intervals_df['Thickness (m)'].max() + 0.5, 0.5)
+                    ax3.hist(all_intervals_df['Thickness (m)'], bins=bins, 
+                            color='#9b59b6', alpha=0.7, edgecolor='black')
+                    ax3.set_xlabel('Thickness (m)', fontsize=10)
+                    ax3.set_ylabel('Frequency', fontsize=10)
+                    ax3.set_title('Distribution of Unperforated Net Pay Interval Thicknesses', 
+                                 fontsize=11, fontweight='bold')
+                    ax3.grid(True, alpha=0.3)
+                    
+                    # Add statistics
+                    mean_thick = all_intervals_df['Thickness (m)'].mean()
+                    median_thick = all_intervals_df['Thickness (m)'].median()
+                    ax3.axvline(mean_thick, color='red', linestyle='--', 
+                               label=f'Mean: {mean_thick:.2f}m')
+                    ax3.axvline(median_thick, color='green', linestyle=':', 
+                               label=f'Median: {median_thick:.2f}m')
+                    ax3.legend(fontsize=8)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig3, use_container_width=True)
+                    
                     # Breakdown by well
                     st.subheader("Breakdown by Well")
                     well_summary = all_intervals_df.groupby('Well').agg(
@@ -1017,25 +1147,27 @@ if st.session_state.well_data:
                     
                     st.dataframe(well_summary, use_container_width=True)
                     
-                    # Download button for all wells
-                    csv_all = all_intervals_df.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        "Download ALL Wells Unperforated Intervals",
-                        csv_all,
-                        "all_wells_unperforated_net_pay.csv",
-                        "text/csv",
-                        key="download_all_wells_unperf"
-                    )
+                    # Download buttons
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        csv_all = all_intervals_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            "Download ALL Wells Unperforated Intervals",
+                            csv_all,
+                            "all_wells_unperforated_net_pay.csv",
+                            "text/csv",
+                            key="download_all_wells_unperf"
+                        )
                     
-                    # Also provide an option to download the well summary
-                    csv_summary = well_summary.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        "Download Well Summary",
-                        csv_summary,
-                        "unperf_pay_well_summary.csv",
-                        "text/csv",
-                        key="download_well_summary"
-                    )
+                    with col2:
+                        csv_summary = well_summary.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            "Download Well Summary",
+                            csv_summary,
+                            "unperf_pay_well_summary.csv",
+                            "text/csv",
+                            key="download_well_summary"
+                        )
 
     # Customized Visualization Tab
     with custom_tab:
