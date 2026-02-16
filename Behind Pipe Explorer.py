@@ -344,108 +344,6 @@ def assign_formation(depth, tops_df):
     
     return formation
 
-# Function to get reservoir intervals (using RESFLAG) for all wells
-def get_all_wells_reservoir_intervals() -> pd.DataFrame:
-    """Get reservoir intervals (RESFLAG=1) for all wells with formation assignments"""
-    all_intervals = []
-    for well_name, well in st.session_state.well_data.items():
-        df = well['data'].copy()
-        
-        # Use RESFLAG to identify reservoir intervals
-        if 'RESFLAG' in df.columns:
-            reservoir_df = df[df['RESFLAG'] == 1].copy()
-        else:
-            # If no RESFLAG, use cutoffs if applied
-            if st.session_state.apply_cutoffs:
-                conditions = []
-                if 'PHIT' in df.columns:
-                    phit_series = df['PHIT'].copy()
-                    if phit_series.max() > 1.5:
-                        phit_series = phit_series / 100
-                    conditions.append(phit_series >= st.session_state.phit_value / 100)
-                
-                if 'SW' in df.columns:
-                    sw_series = df['SW'].copy()
-                    if sw_series.max() > 1.5:
-                        sw_series = sw_series / 100
-                    conditions.append(sw_series <= st.session_state.sw_value / 100)
-                
-                if 'VSH' in df.columns:
-                    vsh_series = df['VSH'].copy()
-                    if vsh_series.max() > 1.5:
-                        vsh_series = vsh_series / 100
-                    conditions.append(vsh_series <= st.session_state.vsh_value / 100)
-                
-                if conditions:
-                    filter_mask = np.all(conditions, axis=0)
-                    reservoir_df = df[filter_mask].copy()
-                else:
-                    reservoir_df = pd.DataFrame()
-            else:
-                reservoir_df = pd.DataFrame()
-        
-        if reservoir_df.empty:
-            continue
-        
-        # Sort by depth and create continuous intervals
-        reservoir_df = reservoir_df.sort_values('DEPTH')
-        reservoir_df['GROUP'] = 0
-        group_num = 0
-        
-        if len(reservoir_df) > 0:
-            reservoir_df.iloc[0, reservoir_df.columns.get_loc('GROUP')] = group_num
-            
-            for i in range(1, len(reservoir_df)):
-                current_depth = reservoir_df.iloc[i]['DEPTH']
-                prev_depth = reservoir_df.iloc[i-1]['DEPTH']
-                
-                # If depths are not consecutive (more than 0.6 m apart), start new group
-                if current_depth - prev_depth > 0.6:
-                    group_num += 1
-                
-                reservoir_df.iloc[i, reservoir_df.columns.get_loc('GROUP')] = group_num
-        
-        # Group by the GROUP column
-        grouped = reservoir_df.groupby('GROUP').agg(
-            Top=('DEPTH', 'min'),
-            Base=('DEPTH', 'max'),
-            Data_Points=('DEPTH', 'count')
-        ).reset_index(drop=True)
-        
-        # Calculate thickness
-        grouped['Thickness (m)'] = (grouped['Base'] - grouped['Top']).round(2)
-        
-        # Estimate thickness for single-point intervals
-        for idx, row in grouped.iterrows():
-            if row['Data_Points'] == 1:
-                grouped.at[idx, 'Thickness (m)'] = 0.1524
-                grouped.at[idx, 'Base'] = row['Top'] + 0.1524
-        
-        grouped['Well'] = well_name
-        
-        # Determine formation from tops
-        grouped['Formation'] = 'Unknown'
-        if 'tops' in well:
-            tops = well['tops']
-            if not tops.empty and 'DEPTH' in tops.columns and 'TOP' in tops.columns:
-                try:
-                    tops = tops.sort_values('DEPTH')
-                    for i, row in grouped.iterrows():
-                        # For each interval, assign the formation based on the midpoint depth
-                        mid_depth = (row['Top'] + row['Base']) / 2
-                        grouped.at[i, 'Formation'] = assign_formation(mid_depth, tops)
-                except Exception as e:
-                    st.warning(f"Error processing tops for {well_name}: {str(e)}")
-        
-        all_intervals.append(grouped[['Well', 'Formation', 'Thickness (m)']])
-    
-    if all_intervals:
-        result = pd.concat(all_intervals, ignore_index=True)
-    else:
-        result = pd.DataFrame(columns=['Well', 'Formation', 'Thickness (m)'])
-    
-    return result
-
 # Function to get unperforated net pay intervals for all wells using PAYFLAG
 def get_all_wells_unperf_intervals() -> pd.DataFrame:
     all_intervals = []
@@ -598,7 +496,7 @@ def get_all_wells_unperf_intervals() -> pd.DataFrame:
     
     return result
 
-# Function to create formation breakdown table
+# Function to create formation breakdown table similar to the image
 def create_formation_breakdown(all_intervals_df):
     """Create a formation breakdown table similar to the image provided"""
     if all_intervals_df.empty:
@@ -624,96 +522,29 @@ def create_formation_breakdown(all_intervals_df):
     
     return formation_breakdown
 
-# Function to create reservoir thickness stacked bar chart
-def create_reservoir_stacked_bar_chart(reservoir_data):
-    """Create a horizontal stacked bar chart showing reservoir thickness by formation for each well"""
-    if reservoir_data.empty:
-        return None
+# Function to create a styled formation breakdown table
+def style_formation_table(df):
+    """Apply styling to the formation breakdown table"""
+    if df.empty:
+        return df
     
-    # Convert thickness from meters to feet for the chart (1 m = 3.28084 ft)
-    reservoir_data['Thickness (ft)'] = reservoir_data['Thickness (m)'] * 3.28084
+    # Create a copy for styling
+    styled_df = df.copy()
     
-    # Get unique wells and formations
-    wells = reservoir_data['Well'].unique()
-    formations = reservoir_data['Formation'].unique()
+    # Add color coding based on thickness values
+    def color_thickness(val):
+        if pd.isna(val) or val == 0:
+            return 'background-color: #f0f0f0'
+        elif val >= 5:
+            return 'background-color: #90EE90'  # Light green for thick
+        elif val >= 2:
+            return 'background-color: #FFD700'  # Gold for medium
+        else:
+            return 'background-color: #FFB6C1'  # Light pink for thin
     
-    # Sort wells by total thickness (descending)
-    well_totals = reservoir_data.groupby('Well')['Thickness (ft)'].sum()
-    wells_sorted = well_totals.sort_values(ascending=False).index.tolist()
-    
-    # Define a professional color palette for formations
-    formation_colors = {
-        'ARA': '#1f77b4',  # blue
-        'ARE': '#ff7f0e',  # orange
-        'Mid.ARG': '#2ca02c',  # green
-        'Upp.ARG': '#d62728',  # red
-        'Upp.Bahariya': '#9467bd',  # purple
-        'low.ARG': '#8c564b',  # brown
-        'Unknown': '#7f7f7f'  # gray
-    }
-    
-    # Create figure
-    fig, ax = plt.subplots(figsize=(12, max(6, len(wells_sorted) * 0.6)))
-    
-    # Initialize bottom positions for stacking
-    y_pos = np.arange(len(wells_sorted))
-    bottoms = np.zeros(len(wells_sorted))
-    
-    # For each formation, add a stacked bar
-    for formation in formations:
-        if formation == 'Unknown':
-            continue
-            
-        # Get thickness for this formation for each well
-        formation_thickness = []
-        for well in wells_sorted:
-            well_data = reservoir_data[(reservoir_data['Well'] == well) & 
-                                      (reservoir_data['Formation'] == formation)]
-            thickness = well_data['Thickness (ft)'].sum() if not well_data.empty else 0
-            formation_thickness.append(thickness)
-        
-        # Get color for this formation
-        color = formation_colors.get(formation, '#7f7f7f')
-        
-        # Plot the stacked bar segment
-        if sum(formation_thickness) > 0:
-            bars = ax.barh(y_pos, formation_thickness, left=bottoms, 
-                          color=color, edgecolor='white', linewidth=0.5, 
-                          label=formation, alpha=0.9)
-            
-            # Add text labels for significant segments (> 5 ft)
-            for i, (bar, thick) in enumerate(zip(bars, formation_thickness)):
-                if thick > 5:
-                    ax.text(bottoms[i] + thick/2, i, f'{thick:.0f}ft', 
-                           ha='center', va='center', fontsize=8, 
-                           color='white', fontweight='bold')
-        
-        # Update bottoms for next stack
-        bottoms += formation_thickness
-    
-    # Customize the chart
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(wells_sorted, fontsize=10, fontweight='bold')
-    ax.set_xlabel('Net Reservoir Thickness (feet)', fontsize=11, fontweight='bold')
-    ax.set_title('Reservoir Thickness Distribution by Formation', fontsize=14, fontweight='bold', pad=20)
-    
-    # Add grid
-    ax.grid(True, alpha=0.3, axis='x')
-    
-    # Add legend
-    ax.legend(loc='lower right', bbox_to_anchor=(1, 0), fontsize=9, framealpha=0.9)
-    
-    # Add total thickness labels at the end of each bar
-    for i, well in enumerate(wells_sorted):
-        total = well_totals[well]
-        ax.text(total + 2, i, f'Total: {total:.0f}ft', 
-               va='center', fontsize=9, fontweight='bold', 
-               color='#2c3e50')
-    
-    plt.tight_layout()
-    return fig
+    return styled_df
 
-# Function to create combined thickness visualization
+# Function to create combined visualization of Well and Formation totals
 def create_combined_thickness_visualization(all_intervals_df):
     """Create a combined visualization showing both Well totals and Formation totals in one graph"""
     if all_intervals_df.empty:
@@ -1117,7 +948,7 @@ if st.session_state.well_data:
             st.pyplot(fig, use_container_width=True)
 
         # Summary and analysis tabs
-        tab1, tab2, tab3 = st.tabs(["Summary Table", "Unperforated Net Pay", "Reservoir Thickness Analysis"])
+        tab1, tab2 = st.tabs(["Summary Table", "Unperforated Net Pay"])
 
         with tab1:
             st.subheader("Well Log Summary")
@@ -1300,7 +1131,7 @@ if st.session_state.well_data:
                         num_wells = all_intervals_df['Well'].nunique()
                         st.metric("Wells with Unperf Pay", num_wells)
                     
-                    # Create formation breakdown table
+                    # Create formation breakdown table similar to the image
                     st.subheader("Formation Breakdown by Well")
                     st.markdown("Thickness (m) of unperforated net pay by formation for each well")
                     
@@ -1310,7 +1141,7 @@ if st.session_state.well_data:
                         # Display the formation breakdown table
                         st.dataframe(formation_breakdown, use_container_width=True)
                         
-                        # Create a heatmap-style visualization
+                        # Create a heatmap-style visualization of the formation breakdown
                         st.subheader("Formation Thickness Heatmap")
                         
                         # Prepare data for heatmap (excluding 'Well' and 'Total' columns)
@@ -1350,7 +1181,7 @@ if st.session_state.well_data:
                         if total_col is not None:
                             formation_breakdown['Total'] = total_col
                     
-                    # Combined visualization
+                    # COMBINED VISUALIZATION - Well totals and Formation totals in one graph
                     st.subheader("Combined Thickness Analysis")
                     st.markdown("Side-by-side comparison of total thickness by well and by formation")
                     
@@ -1398,62 +1229,6 @@ if st.session_state.well_data:
                             "text/csv",
                             key="download_well_summary"
                         )
-        
-        with tab3:
-            st.subheader("Reservoir Thickness Analysis")
-            st.markdown("**Horizontal Stacked Bar Chart**: Net reservoir thickness distribution by formation for each well")
-            
-            # Get reservoir intervals data
-            reservoir_data = get_all_wells_reservoir_intervals()
-            
-            if reservoir_data.empty:
-                st.info("No reservoir intervals found. Please ensure RESFLAG data is available or adjust cutoffs.")
-            else:
-                # Create the stacked bar chart
-                stacked_fig = create_reservoir_stacked_bar_chart(reservoir_data)
-                
-                if stacked_fig:
-                    st.pyplot(stacked_fig, use_container_width=True)
-                    
-                    # Add explanation
-                    st.info("""
-                    **How to read this chart:**
-                    - Each horizontal bar represents one well
-                    - Colored segments show thickness contribution from each formation
-                    - Bar length = total net reservoir thickness in that well
-                    - Numbers on segments show thickness in feet (for segments > 5 ft)
-                    - Wells are sorted by total thickness (thickest at top)
-                    """)
-                    
-                    # Show the data table
-                    st.subheader("Reservoir Thickness Data (feet)")
-                    
-                    # Create pivot table for display
-                    reservoir_pivot = reservoir_data.pivot_table(
-                        index='Well',
-                        columns='Formation',
-                        values='Thickness (ft)',
-                        aggfunc='sum',
-                        fill_value=0
-                    ).round(1)
-                    
-                    # Add total column
-                    reservoir_pivot['Total (ft)'] = reservoir_pivot.sum(axis=1).round(1)
-                    
-                    # Sort by total
-                    reservoir_pivot = reservoir_pivot.sort_values('Total (ft)', ascending=False)
-                    
-                    st.dataframe(reservoir_pivot, use_container_width=True)
-                    
-                    # Download button
-                    csv_reservoir = reservoir_pivot.reset_index().to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        "Download Reservoir Thickness Data",
-                        csv_reservoir,
-                        "reservoir_thickness_by_formation.csv",
-                        "text/csv",
-                        key="download_reservoir_data"
-                    )
 
     # Customized Visualization Tab
     with custom_tab:
