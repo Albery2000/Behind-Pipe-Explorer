@@ -544,6 +544,60 @@ def style_formation_table(df):
     
     return styled_df
 
+# Function to create combined visualization of Well and Formation totals
+def create_combined_thickness_visualization(all_intervals_df):
+    """Create a combined visualization showing both Well totals and Formation totals in one graph"""
+    if all_intervals_df.empty:
+        return None
+    
+    # Prepare data for wells
+    well_totals = all_intervals_df.groupby('Well')['Thickness (m)'].sum().sort_values(ascending=False)
+    
+    # Prepare data for formations
+    formation_totals = all_intervals_df.groupby('Zone')['Thickness (m)'].sum().sort_values(ascending=False)
+    
+    # Create figure with two subplots side by side
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, max(6, len(well_totals) * 0.4)))
+    
+    # Colors
+    well_color = '#3498db'  # Blue
+    formation_color = '#e67e22'  # Orange
+    
+    # Plot 1: Well totals (horizontal bars)
+    y_pos1 = np.arange(len(well_totals))
+    bars1 = ax1.barh(y_pos1, well_totals.values, color=well_color, alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax1.set_yticks(y_pos1)
+    ax1.set_yticklabels(well_totals.index, fontsize=10)
+    ax1.set_xlabel('Thickness (m)', fontsize=11, fontweight='bold')
+    ax1.set_title('Total Unperforated Net Pay by Well', fontsize=12, fontweight='bold', pad=15)
+    
+    # Add value labels on bars
+    for i, (bar, val) in enumerate(zip(bars1, well_totals.values)):
+        ax1.text(val + 0.2, i, f'{val:.1f}m', va='center', fontsize=9, fontweight='bold')
+    
+    # Add grid
+    ax1.grid(True, alpha=0.3, axis='x')
+    
+    # Plot 2: Formation totals (horizontal bars)
+    y_pos2 = np.arange(len(formation_totals))
+    bars2 = ax2.barh(y_pos2, formation_totals.values, color=formation_color, alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax2.set_yticks(y_pos2)
+    ax2.set_yticklabels(formation_totals.index, fontsize=10)
+    ax2.set_xlabel('Thickness (m)', fontsize=11, fontweight='bold')
+    ax2.set_title('Total Thickness by Formation (All Wells)', fontsize=12, fontweight='bold', pad=15)
+    
+    # Add value labels on bars
+    for i, (bar, val) in enumerate(zip(bars2, formation_totals.values)):
+        ax2.text(val + 0.2, i, f'{val:.1f}m', va='center', fontsize=9, fontweight='bold')
+    
+    # Add grid
+    ax2.grid(True, alpha=0.3, axis='x')
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig
+
 # Process uploaded files
 if uploaded_files:
     process_las_files(uploaded_files)
@@ -1127,45 +1181,13 @@ if st.session_state.well_data:
                         if total_col is not None:
                             formation_breakdown['Total'] = total_col
                     
-                    # Simple bar chart of total thickness by well
-                    st.subheader("Total Unperforated Net Pay by Well")
+                    # COMBINED VISUALIZATION - Well totals and Formation totals in one graph
+                    st.subheader("Combined Thickness Analysis")
+                    st.markdown("Side-by-side comparison of total thickness by well and by formation")
                     
-                    # Group by well and sum thickness
-                    well_totals = all_intervals_df.groupby('Well')['Thickness (m)'].sum().sort_values()
-                    
-                    # Create horizontal bar chart
-                    fig2, ax2 = plt.subplots(figsize=(10, max(4, len(well_totals) * 0.5)))
-                    y_pos = np.arange(len(well_totals))
-                    bars = ax2.barh(y_pos, well_totals.values, color='#3498db', alpha=0.7)
-                    ax2.set_yticks(y_pos)
-                    ax2.set_yticklabels(well_totals.index)
-                    ax2.set_xlabel('Total Thickness (m)')
-                    ax2.set_title('Total Unperforated Net Pay by Well')
-                    
-                    # Add value labels
-                    for i, (bar, val) in enumerate(zip(bars, well_totals.values)):
-                        ax2.text(val + 0.1, i, f'{val:.1f}m', va='center')
-                    
-                    plt.tight_layout()
-                    st.pyplot(fig2, use_container_width=True)
-                    
-                    # Formation summary (total by formation across all wells)
-                    st.subheader("Total Thickness by Formation (All Wells)")
-                    formation_totals = all_intervals_df.groupby('Zone')['Thickness (m)'].sum().sort_values(ascending=False)
-                    
-                    fig3, ax3 = plt.subplots(figsize=(10, max(4, len(formation_totals) * 0.5)))
-                    bars3 = ax3.barh(np.arange(len(formation_totals)), formation_totals.values, color='#e67e22', alpha=0.7)
-                    ax3.set_yticks(np.arange(len(formation_totals)))
-                    ax3.set_yticklabels(formation_totals.index)
-                    ax3.set_xlabel('Total Thickness (m)')
-                    ax3.set_title('Total Unperforated Net Pay by Formation')
-                    
-                    # Add value labels
-                    for i, (bar, val) in enumerate(zip(bars3, formation_totals.values)):
-                        ax3.text(val + 0.1, i, f'{val:.1f}m', va='center')
-                    
-                    plt.tight_layout()
-                    st.pyplot(fig3, use_container_width=True)
+                    combined_fig = create_combined_thickness_visualization(all_intervals_df)
+                    if combined_fig:
+                        st.pyplot(combined_fig, use_container_width=True)
                     
                     # Download buttons
                     col1, col2, col3 = st.columns(3)
