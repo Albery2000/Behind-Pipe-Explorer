@@ -8,7 +8,6 @@ import sys
 import re
 from pathlib import Path
 import seaborn as sns
-from matplotlib.patches import Patch
 
 
 # Set page config
@@ -1007,143 +1006,77 @@ if st.session_state.well_data:
                         num_wells = all_intervals_df['Well'].nunique()
                         st.metric("Wells with Unperf Pay", num_wells)
                     
-                    # Visualization of Unperforated Net Pay Intervals
-                    st.subheader("Visualization of Unperforated Net Pay Intervals")
+                    # Simplified visualization matching the provided image style
+                    st.subheader("Unperforated Net Pay Intervals Summary")
                     
-                    # Create a visualization showing intervals by well
-                    fig, ax = plt.subplots(figsize=(12, max(6, len(all_intervals_df) * 0.3)))
+                    # Create a simplified summary table similar to the image
+                    summary_table = all_intervals_df[['Well', 'Zone', 'Thickness (m)', 'Avg_Porosity', 'Avg_Sw']].copy()
+                    summary_table.columns = ['Well', 'Formation', 'Thick (m)', 'Porosity %', 'Sw %']
                     
-                    # Get unique wells for y-axis
-                    wells = all_intervals_df['Well'].unique()
-                    well_to_y = {well: i for i, well in enumerate(wells)}
-                    
-                    # Plot each interval as a horizontal bar
-                    for idx, row in all_intervals_df.iterrows():
-                        y_pos = well_to_y[row['Well']]
-                        thickness = row['Thickness (m)']
-                        
-                        # Color based on thickness
+                    # Add a color-coded thickness indicator
+                    def get_thickness_indicator(thickness):
                         if thickness >= 5:
-                            color = '#2ecc71'  # Green for thick intervals
+                            return "🟢"  # Green circle for thick
                         elif thickness >= 2:
-                            color = '#f1c40f'  # Yellow for medium intervals
+                            return "🟡"  # Yellow circle for medium
                         else:
-                            color = '#e74c3c'  # Red for thin intervals
-                        
-                        # Add the bar
-                        ax.barh(y_pos, thickness, left=0, height=0.6, 
-                               color=color, alpha=0.7, edgecolor='black', linewidth=0.5)
-                        
-                        # Add interval details as text
-                        zone_text = f"{row['Zone']} ({row['Top']:.1f}-{row['Base']:.1f}m)"
-                        ax.text(thickness + 0.1, y_pos, zone_text, 
-                               va='center', fontsize=8, ha='left')
-                        
-                        # Add thickness value
-                        ax.text(thickness/2, y_pos, f"{thickness:.1f}m", 
-                               va='center', ha='center', fontsize=7, 
-                               color='black', fontweight='bold')
+                            return "🔴"  # Red circle for thin
                     
-                    # Customize the plot
-                    ax.set_yticks(list(range(len(wells))))
-                    ax.set_yticklabels(wells)
-                    ax.set_xlabel('Thickness (m)', fontsize=10, fontweight='bold')
-                    ax.set_title('Unperforated Net Pay Intervals by Well', fontsize=12, fontweight='bold')
+                    summary_table['Quality'] = summary_table['Thick (m)'].apply(get_thickness_indicator)
                     
-                    # Add grid
-                    ax.grid(True, alpha=0.3, axis='x')
+                    # Reorder columns to put Quality first
+                    cols = summary_table.columns.tolist()
+                    cols = ['Quality'] + [c for c in cols if c != 'Quality']
+                    summary_table = summary_table[cols]
                     
-                    # Set x-axis limits with some padding
-                    max_thickness = all_intervals_df['Thickness (m)'].max()
-                    ax.set_xlim(0, max_thickness * 1.4)
+                    # Display the simplified table
+                    st.dataframe(summary_table, use_container_width=True)
                     
-                    # Add legend for thickness categories
-                    legend_elements = [
-                        Patch(facecolor='#2ecc71', alpha=0.7, label='Thick (≥5m)'),
-                        Patch(facecolor='#f1c40f', alpha=0.7, label='Medium (2-5m)'),
-                        Patch(facecolor='#e74c3c', alpha=0.7, label='Thin (<2m)')
-                    ]
-                    ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
+                    # Simple bar chart of thickness by well (like a quick reference)
+                    st.subheader("Quick Thickness Reference")
+                    
+                    # Create a simple horizontal bar chart
+                    fig, ax = plt.subplots(figsize=(10, max(4, len(all_intervals_df['Well'].unique()) * 0.5)))
+                    
+                    # Group by well and sum thickness
+                    well_thickness = all_intervals_df.groupby('Well')['Thickness (m)'].sum().sort_values()
+                    
+                    # Create horizontal bars
+                    y_pos = np.arange(len(well_thickness))
+                    ax.barh(y_pos, well_thickness.values, color='#3498db', alpha=0.7)
+                    ax.set_yticks(y_pos)
+                    ax.set_yticklabels(well_thickness.index)
+                    ax.set_xlabel('Total Thickness (m)')
+                    ax.set_title('Total Unperforated Net Pay by Well')
+                    
+                    # Add value labels
+                    for i, v in enumerate(well_thickness.values):
+                        ax.text(v + 0.1, i, f'{v:.1f}m', va='center')
                     
                     plt.tight_layout()
                     st.pyplot(fig, use_container_width=True)
                     
-                    # Alternative visualization: Bar chart by well with thickness distribution
-                    st.subheader("Thickness Distribution by Well")
-                    
-                    # Create a bar chart showing total thickness per well
-                    well_summary = all_intervals_df.groupby('Well').agg(
-                        Total_Thickness=('Thickness (m)', 'sum'),
-                        Num_Intervals=('Thickness (m)', 'count')
-                    ).reset_index()
-                    
-                    fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-                    
-                    # Bar chart - Total Thickness by Well
-                    bars1 = ax1.bar(well_summary['Well'], well_summary['Total_Thickness'], 
-                                   color='#3498db', alpha=0.7, edgecolor='black')
-                    ax1.set_xlabel('Well', fontsize=10)
-                    ax1.set_ylabel('Total Thickness (m)', fontsize=10)
-                    ax1.set_title('Total Unperforated Net Pay by Well', fontsize=11, fontweight='bold')
-                    ax1.tick_params(axis='x', rotation=45)
-                    
-                    # Add value labels on bars
-                    for bar in bars1:
-                        height = bar.get_height()
-                        ax1.text(bar.get_x() + bar.get_width()/2., height,
-                                f'{height:.1f}m', ha='center', va='bottom', fontsize=8)
-                    
-                    # Bar chart - Number of Intervals by Well
-                    bars2 = ax2.bar(well_summary['Well'], well_summary['Num_Intervals'], 
-                                   color='#e67e22', alpha=0.7, edgecolor='black')
-                    ax2.set_xlabel('Well', fontsize=10)
-                    ax2.set_ylabel('Number of Intervals', fontsize=10)
-                    ax2.set_title('Number of Unperforated Intervals by Well', fontsize=11, fontweight='bold')
-                    ax2.tick_params(axis='x', rotation=45)
-                    
-                    # Add value labels on bars
-                    for bar in bars2:
-                        height = bar.get_height()
-                        ax2.text(bar.get_x() + bar.get_width()/2., height,
-                                f'{int(height)}', ha='center', va='bottom', fontsize=8)
-                    
-                    plt.tight_layout()
-                    st.pyplot(fig2, use_container_width=True)
-                    
-                    # Thickness histogram
-                    st.subheader("Thickness Distribution Histogram")
-                    fig3, ax3 = plt.subplots(figsize=(10, 5))
-                    
-                    # Create histogram of interval thicknesses
-                    bins = np.arange(0, all_intervals_df['Thickness (m)'].max() + 0.5, 0.5)
-                    ax3.hist(all_intervals_df['Thickness (m)'], bins=bins, 
-                            color='#9b59b6', alpha=0.7, edgecolor='black')
-                    ax3.set_xlabel('Thickness (m)', fontsize=10)
-                    ax3.set_ylabel('Frequency', fontsize=10)
-                    ax3.set_title('Distribution of Unperforated Net Pay Interval Thicknesses', 
-                                 fontsize=11, fontweight='bold')
-                    ax3.grid(True, alpha=0.3)
-                    
-                    # Add statistics
-                    mean_thick = all_intervals_df['Thickness (m)'].mean()
-                    median_thick = all_intervals_df['Thickness (m)'].median()
-                    ax3.axvline(mean_thick, color='red', linestyle='--', 
-                               label=f'Mean: {mean_thick:.2f}m')
-                    ax3.axvline(median_thick, color='green', linestyle=':', 
-                               label=f'Median: {median_thick:.2f}m')
-                    ax3.legend(fontsize=8)
-                    
-                    plt.tight_layout()
-                    st.pyplot(fig3, use_container_width=True)
-                    
-                    # Breakdown by well
-                    st.subheader("Breakdown by Well")
+                    # Breakdown by well (simplified)
+                    st.subheader("Well Summary")
                     well_summary = all_intervals_df.groupby('Well').agg(
                         Intervals=('Thickness (m)', 'count'),
                         Total_Thickness=('Thickness (m)', 'sum'),
                         Avg_Porosity=('Avg_Porosity', 'mean'),
                         Avg_Sw=('Avg_Sw', 'mean')
                     ).round(2).reset_index()
+                    
+                    # Add quality indicator based on total thickness
+                    def get_well_quality(thickness):
+                        if thickness >= 10:
+                            return "🟢 Excellent"
+                        elif thickness >= 5:
+                            return "🟡 Good"
+                        elif thickness >= 2:
+                            return "🟠 Fair"
+                        else:
+                            return "🔴 Poor"
+                    
+                    well_summary['Potential'] = well_summary['Total_Thickness'].apply(get_well_quality)
                     
                     st.dataframe(well_summary, use_container_width=True)
                     
